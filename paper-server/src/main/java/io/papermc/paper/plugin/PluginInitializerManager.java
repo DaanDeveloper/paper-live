@@ -100,8 +100,16 @@ public class PluginInitializerManager {
         // We have to load the bukkit configuration inorder to get the update folder location.
         io.papermc.paper.plugin.PluginInitializerManager pluginSystem = io.papermc.paper.plugin.PluginInitializerManager.init(optionSet);
 
+        // PaperLive start - Build conventional source plugins before registering their JARs with Paper.
+        final Path paperLiveRuntimeDirectory = PaperLiveProjectCompiler.compileProjects(pluginSystem.pluginDirectoryPath(), LOGGER);
+
         // Register the default plugin directory
         io.papermc.paper.plugin.util.EntrypointUtil.registerProvidersFromSource(io.papermc.paper.plugin.provider.source.DirectoryProviderSource.INSTANCE, pluginSystem.pluginDirectoryPath());
+
+        if (paperLiveRuntimeDirectory != null) {
+            io.papermc.paper.plugin.util.EntrypointUtil.registerProvidersFromSource(io.papermc.paper.plugin.provider.source.DirectoryProviderSource.INSTANCE_NO_CREATE, paperLiveRuntimeDirectory);
+        }
+        // PaperLive end
 
         // Register plugins from the flag
         @SuppressWarnings("unchecked")

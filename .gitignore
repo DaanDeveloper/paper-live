@@ -43,6 +43,25 @@ out/
 run/
 logs/
 
+# PaperLive local server state (keep project source and build wrappers tracked)
+.paperlive-runtime/
+plugins/.paperlive-runtime/
+plugins/PaperLive/config.yml
+plugins/PaperLive/projects/**/target/
+plugins/PaperLive/projects/**/build/
+cache/
+libraries/
+versions/
+world/
+world_nether/
+world_the_end/
+eula.txt
+ops.json
+usercache.json
+whitelist.json
+banned-ips.json
+banned-players.json
+
 !gradle/wrapper/gradle-wrapper.jar
 
 test-plugin.settings.gradle.kts

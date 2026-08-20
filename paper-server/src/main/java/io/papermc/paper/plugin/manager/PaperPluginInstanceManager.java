@@ -53,13 +53,18 @@ class PaperPluginInstanceManager {
     private final PluginManager pluginManager;
     private final CommandMap commandMap;
     private final Server server;
+    private final PaperLiveRuntimeRegistry paperLiveRuntimeRegistry;
+    private final List<ConfiguredPluginClassLoader> deferredPaperLiveClassLoaders = new ArrayList<>();
+    private final List<String> paperLiveRefreshBlockers = new ArrayList<>();
+    private boolean preparingPaperLiveRefresh;
 
     private final MetaDependencyTree dependencyTree = new SimpleMetaDependencyTree(GraphBuilder.directed().build());
 
-    public PaperPluginInstanceManager(PluginManager pluginManager, CommandMap commandMap, Server server) {
+    public PaperPluginInstanceManager(@NotNull PluginManager pluginManager, @NotNull CommandMap commandMap, @NotNull Server server, @NotNull PaperLiveRuntimeRegistry paperLiveRuntimeRegistry) {
         this.commandMap = commandMap;
         this.server = server;
         this.pluginManager = pluginManager;
+        this.paperLiveRuntimeRegistry = paperLiveRuntimeRegistry;
     }
 
     public @Nullable Plugin getPlugin(@NotNull String name) {
@@ -197,7 +202,7 @@ class PaperPluginInstanceManager {
                 }
             } // Paper
 
-            try {
+            try (PaperLiveClassLoaderScope ignored = PaperLiveClassLoaderScope.open(plugin)) {
                 jPlugin.setEnabled(true);
             } catch (Throwable ex) {
                 this.server.getLogger().log(Level.SEVERE, "Error occurred while enabling " + plugin.getPluginMeta().getDisplayName() + " (Is it up to date?)", ex);
@@ -236,22 +241,6 @@ class PaperPluginInstanceManager {
                 javaPlugin.setEnabled(false);
             } catch (Throwable ex) {
                 this.server.getLogger().log(Level.SEVERE, "Error occurred while disabling " + pluginName, ex);
-            }
-
-            // Flush async appender before unloading, avoids issues when a log message with class context
-            // tries to print after its source has unloaded (i.e., Guice enhanced errors)
-            FeatureHooks.flushAsyncAppenders();
-
-            ClassLoader classLoader = plugin.getClass().getClassLoader();
-            if (classLoader instanceof ConfiguredPluginClassLoader configuredPluginClassLoader) {
-                try {
-                    configuredPluginClassLoader.close();
-                } catch (IOException ex) {
-                    this.server.getLogger().log(Level.WARNING, "Error closing the classloader for '" + pluginName + "'", ex); // Paper - log exception
-                }
-                // Remove from the classloader pool inorder to prevent plugins from trying
-                // to access classes
-                PaperClassLoaderStorage.instance().unregisterClassloader(configuredPluginClassLoader);
             }
 
         } catch (Throwable ex) {
@@ -323,6 +312,88 @@ class PaperPluginInstanceManager {
             this.handlePluginException("Error occurred (in the plugin loader) while removing chunk tickets for " + pluginName + " (Is it up to date?)", ex, plugin); // Paper
         }
 
+        // PaperLive start - Release all supported runtime resources before closing the plugin classloader.
+        this.paperLiveRuntimeRegistry.release(plugin);
+
+        this.addPaperLiveThreadBlockers(pluginName, PaperLiveThreadQuiescer.stopOwnedThreads(plugin), this.paperLiveRefreshBlockers);
+
+        // Flush async appenders before unloading, avoiding class loading after the plugin is closed.
+        FeatureHooks.flushAsyncAppenders();
+
+        ClassLoader classLoader = plugin.getClass().getClassLoader();
+        if (classLoader instanceof ConfiguredPluginClassLoader configuredPluginClassLoader) {
+            if (this.preparingPaperLiveRefresh) {
+                this.deferredPaperLiveClassLoaders.add(configuredPluginClassLoader);
+            } else {
+                this.closeClassLoader(configuredPluginClassLoader, pluginName);
+            }
+        }
+        // PaperLive end
+
+    }
+
+    synchronized @NotNull PaperLiveRefreshPreparation preparePaperLiveRefresh() {
+        Plugin[] loadedPlugins = this.getPlugins();
+        List<String> preflightBlockers = new ArrayList<>();
+
+        for (Plugin plugin : loadedPlugins) {
+            this.addPaperLiveThreadBlockers(plugin.getPluginMeta().getDisplayName(), PaperLiveThreadQuiescer.stopOwnedThreads(plugin), preflightBlockers);
+        }
+
+        if (!preflightBlockers.isEmpty()) {
+            return new PaperLiveRefreshPreparation(false, List.copyOf(preflightBlockers));
+        }
+
+        this.preparingPaperLiveRefresh = true;
+        this.deferredPaperLiveClassLoaders.clear();
+        this.paperLiveRefreshBlockers.clear();
+
+        for (int index = loadedPlugins.length - 1; index >= 0; index--) {
+            this.disablePlugin(loadedPlugins[index]);
+        }
+
+        this.preparingPaperLiveRefresh = false;
+
+        if (!this.paperLiveRefreshBlockers.isEmpty()) {
+            List<String> blockers = List.copyOf(this.paperLiveRefreshBlockers);
+            this.deferredPaperLiveClassLoaders.clear();
+
+            for (Plugin plugin : loadedPlugins) {
+                if (!plugin.isEnabled()) {
+                    this.enablePlugin(plugin);
+                }
+            }
+
+            return new PaperLiveRefreshPreparation(false, blockers);
+        }
+
+        for (ConfiguredPluginClassLoader classLoader : this.deferredPaperLiveClassLoaders) {
+            this.closeClassLoader(classLoader, "PaperLive managed plugin");
+        }
+
+        this.deferredPaperLiveClassLoaders.clear();
+        return new PaperLiveRefreshPreparation(true, List.of());
+    }
+
+    private void addPaperLiveThreadBlockers(@NotNull String pluginName, @NotNull List<PaperLiveThreadQuiescer.ThreadBlocker> threadBlockers, @NotNull List<String> blockers) {
+        for (PaperLiveThreadQuiescer.ThreadBlocker threadBlocker : threadBlockers) {
+            String blocker = pluginName + ": thread " + threadBlocker.summary();
+            blockers.add(blocker);
+            this.server.getLogger().warning("[PaperLive] Refresh blocker diagnostic:\n" + pluginName + ":\n" + threadBlocker.diagnostic());
+        }
+    }
+
+    private void closeClassLoader(@NotNull ConfiguredPluginClassLoader classLoader, @NotNull String pluginName) {
+        try {
+            classLoader.close();
+        } catch (IOException exception) {
+            this.server.getLogger().log(Level.WARNING, "Error closing the classloader for '" + pluginName + "'", exception);
+        }
+
+        PaperClassLoaderStorage.instance().unregisterClassloader(classLoader);
+    }
+
+    record PaperLiveRefreshPreparation(boolean successful, @NotNull List<String> blockers) {
     }
 
     private void handlePluginException(String msg, Throwable ex, Plugin plugin) {

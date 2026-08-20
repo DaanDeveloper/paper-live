@@ -599,6 +599,7 @@ public final class CraftServer implements Server {
             CraftDefaultPermissions.registerCorePermissions();
             if (!io.papermc.paper.configuration.GlobalConfiguration.get().misc.loadPermissionsYmlBeforePlugins) this.loadCustomPermissions(); // Paper
             this.syncCommands();
+            io.papermc.paper.plugin.PaperLiveSourceWatcher.start(this.getPluginsFolder().toPath()); // PaperLive - automatic source refresh
         }
     }
 

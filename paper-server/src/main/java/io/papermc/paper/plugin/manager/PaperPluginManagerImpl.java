@@ -32,11 +32,13 @@ public class PaperPluginManagerImpl implements PluginManager, DependencyContext 
 
     final PaperPluginInstanceManager instanceManager;
     final PaperEventManager paperEventManager;
+    final PaperLiveRuntimeRegistry paperLiveRuntimeRegistry;
     PermissionManager permissionManager;
 
-    public PaperPluginManagerImpl(Server server, CommandMap commandMap, @Nullable SimplePluginManager permissionManager) {
-        this.instanceManager = new PaperPluginInstanceManager(this, commandMap, server);
-        this.paperEventManager = new PaperEventManager(server);
+    public PaperPluginManagerImpl(@NotNull Server server, @NotNull CommandMap commandMap, @Nullable SimplePluginManager permissionManager) {
+        this.paperLiveRuntimeRegistry = new PaperLiveRuntimeRegistry();
+        this.instanceManager = new PaperPluginInstanceManager(this, commandMap, server, this.paperLiveRuntimeRegistry);
+        this.paperEventManager = new PaperEventManager(server, this.paperLiveRuntimeRegistry);
 
         if (permissionManager == null) {
             this.permissionManager = new NormalPaperPermissionManager();
@@ -112,6 +114,25 @@ public class PaperPluginManagerImpl implements PluginManager, DependencyContext 
     @Override
     public void disablePlugin(@NotNull Plugin plugin) {
         this.instanceManager.disablePlugin(plugin);
+    }
+
+    /**
+     * Quiesces every loaded plugin before PaperLive replaces their classloaders.
+     *
+     * @return preparation result containing any resources that refused to stop
+     */
+    public @NotNull PaperLiveRefreshResult preparePaperLiveRefresh() {
+        PaperPluginInstanceManager.PaperLiveRefreshPreparation preparation = this.instanceManager.preparePaperLiveRefresh();
+        return new PaperLiveRefreshResult(preparation.successful(), preparation.blockers());
+    }
+
+    /**
+     * Result of preparing all plugins for a PaperLive refresh.
+     *
+     * @param successful whether every plugin reached a safe quiescent state
+     * @param blockers resources that prevented safe classloader replacement
+     */
+    public record PaperLiveRefreshResult(boolean successful, @NotNull List<String> blockers) {
     }
 
     @Override

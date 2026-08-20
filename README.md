@@ -1,99 +1,108 @@
-Paper [![Version](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Fartifactory.papermc.io%2Fartifactory%2Funiverse%2Fio%2Fpapermc%2Fpaper%2Fpaper-api%2Fmaven-metadata.xml&strategy=highestVersion&filter=26.2*&label=version&color=%23344ceb
-)](https://papermc.io/downloads/paper)
-[![Paper Build Status](https://img.shields.io/github/actions/workflow/status/PaperMC/Paper/build.yml?branch=main)](https://github.com/PaperMC/Paper/actions)
-[![Discord](https://img.shields.io/discord/289587909051416579.svg?label=&logo=discord&logoColor=ffffff&color=7389D8&labelColor=6A7EC2)](https://discord.gg/papermc)
-[![GitHub Sponsors](https://img.shields.io/github/sponsors/papermc?label=GitHub%20Sponsors)](https://github.com/sponsors/PaperMC)
-[![Open Collective](https://img.shields.io/opencollective/all/papermc?label=OpenCollective%20Sponsors)](https://opencollective.com/papermc)
-===========
+# PaperLive
 
-The most widely used, high-performance Minecraft server that aims to fix gameplay and mechanics inconsistencies.
+PaperLive is a development-focused Paper server that builds and reloads ordinary Paper plugins directly from their source projects. Put a Maven or Gradle plugin project in the server's `plugins/PaperLive/projects` folder and PaperLive builds it, prepares an isolated runtime JAR, and loads it like any other plugin.
 
+It is intended for local plugin development: edit source code, wait for the configured quiet period or run `/plive refresh`, then test the new plugin without manually copying JARs around.
 
-**Support and Project Discussion:**
-- [Our forums](https://forums.papermc.io/) or [Discord](https://discord.gg/papermc)
+## What PaperLive does
 
-How To (Server Admins)
-------
-Paperclip is a jar file that you can download and run just like a normal jar file.
+- Builds Maven and Gradle plugin projects at server startup.
+- Keeps generated runtime JARs in `plugins/.paperlive-runtime/`, separate from source code.
+- Reloads projects with `/paperlive refresh` or `/plive refresh`.
+- Optionally watches source changes and refreshes only after a configurable period without edits.
+- Stops the refresh when plugin-owned threads cannot be shut down safely, and logs the responsible thread.
+- Rejects incomplete build JARs before they can enter the runtime directory.
 
-Download Paper from our [downloads page](https://papermc.io/downloads/paper).
+PaperLive does not replace normal plugin development. Each project remains a conventional Paper plugin with its own build file, wrapper, dependencies, source tree, and `plugin.yml`.
 
-Run the Paperclip jar directly from your server. Just like old times.
+## Quick start
 
-* Documentation on using Paper: [docs.papermc.io](https://docs.papermc.io)
-* For a sneak peek at upcoming features, [see here](https://github.com/PaperMC/Paper/projects)
+1. Build PaperLive or obtain its Paperclip JAR.
+2. Create a normal Paper server directory and run the JAR once.
+3. Place plugin source projects in `plugins/PaperLive/projects/`.
+4. Start the server. PaperLive compiles every supported project before plugin loading.
+5. Edit your plugin and use `/plive refresh`, or let the source watcher refresh it after the configured quiet period.
 
-How To (Plugin Developers)
-------
-* See our API [here](paper-api)
-* See upcoming, pending, and recently added API [here](https://github.com/orgs/PaperMC/projects/2/views/4)
-* Paper API javadocs here: [papermc.io/javadocs](https://papermc.io/javadocs/)
-#### Repository (for paper-api)
-See [the docs](https://docs.papermc.io/paper/dev/project-setup/#adding-paper-as-a-dependency) for more details.
-##### Gradle
-```kotlin
-repositories {
-    maven {
-        url = uri("https://repo.papermc.io/repository/maven-public/")
-    }
-}
+Do not copy a PaperLive project's built JAR into `plugins/`. PaperLive already loads its isolated runtime copy; loading both would create duplicate plugins.
 
-dependencies {
-    compileOnly("io.papermc.paper:paper-api:26.2.build.+")
-}
+## Project layout
 
-java {
-    toolchain.languageVersion.set(JavaLanguageVersion.of(25))
-}
-```
-##### Maven
+Each direct child directory of `plugins/PaperLive/projects/` is treated as one source project.
 
-```xml
-<repository>
-    <id>papermc</id>
-    <url>https://repo.papermc.io/repository/maven-public/</url>
-</repository>
+```text
+plugins/
+├── PaperLive/
+│   ├── config.yml
+│   └── projects/
+│       └── example-plugin/
+│           ├── pom.xml                 # Maven project
+│           ├── mvnw
+│           ├── mvnw.cmd
+│           ├── .mvn/
+│           └── src/main/
+│               ├── java/
+│               └── resources/plugin.yml
+└── .paperlive-runtime/                 # managed by PaperLive
 ```
 
-```xml
-<dependency>
-    <groupId>io.papermc.paper</groupId>
-    <artifactId>paper-api</artifactId>
-    <version>[26.2.build,)</version>
-    <scope>provided</scope>
-</dependency>
+Gradle projects use `build.gradle` or `build.gradle.kts`, plus their own `gradlew` and `gradlew.bat` wrapper files. Maven projects use `pom.xml`, `mvnw`, `mvnw.cmd`, and `.mvn/wrapper/`.
+
+The built JAR must contain a root-level `plugin.yml` and the class declared by its `main` property.
+
+## Refreshing plugins
+
+Use these commands as an operator:
+
+| Command | Purpose |
+| --- | --- |
+| `/paperlive refresh` or `/plive refresh` | Build all source projects and reload them. |
+| `/paperlive projects` | List detected PaperLive projects. |
+| `/paperlive help` | Show PaperLive command help. |
+
+The default watcher waits 30 seconds after the last relevant file change before refreshing. This works well with IntelliJ autosave: while you are typing, each save restarts the timer instead of repeatedly rebuilding the server.
+
+Configure it in `plugins/PaperLive/config.yml`:
+
+```yml
+auto-refresh: true
+auto-refresh-debounce-seconds: 30
 ```
 
-How To (Compiling Jar From Source)
-------
-To compile Paper, you need JDK 25 and an internet connection.
+Set `auto-refresh` to `false` to build only through `/plive refresh`. Restart the server after changing this file.
 
-Clone this repo, run `./gradlew applyPatches`, then `./gradlew createPaperclipJar` from your terminal. You can find the compiled jar in the `paper-server/build/libs` directory.
+## Build logs and troubleshooting
 
-To get a full list of tasks, run `./gradlew tasks`.
+Every project has a build log in:
 
-How To (Pull Request)
-------
-See [Contributing](CONTRIBUTING.md)
+```text
+plugins/.paperlive-runtime/paperlive-<project-name>.build.log
+```
 
-Old Versions (1.21.3 and below)
-------
-For branches of versions 1.8-1.21.3, please see our [archive repository](https://github.com/PaperMC/Paper-archive).
+An empty build log usually means PaperLive could not start the build command, such as when a required Maven or Gradle wrapper is missing. Maven and Gradle compiler errors are written to the same log.
 
-Support Us
-------
-First of all, thank you for considering helping out, we really appreciate that!
+If a refresh is blocked, PaperLive leaves the active plugins unchanged and reports the responsible plugin thread in the console. The detailed stack trace is logged as a `Refresh blocker diagnostic` entry.
 
-PaperMC has various recurring expenses, mostly related to infrastructure. Paper uses [Open Collective](https://opencollective.com/) via the [Open Source Collective fiscal host](https://opencollective.com/opensource) to manage expenses. Open Collective allows us to be extremely transparent, so you can always see how your donations are used. You can read more about financially supporting PaperMC [on our website](https://papermc.io/sponsors).
+Avoid running `mvn package` or `gradlew build` manually while PaperLive is building the same project. Let PaperLive own the build during a refresh so it never observes a partially written output JAR.
 
-You can find our collective [here](https://opencollective.com/papermc), or you can donate via GitHub Sponsors [here](https://github.com/sponsors/PaperMC), which will also go towards the collective.
+## Building PaperLive from source
 
-Special Thanks To:
--------------
+PaperLive is built as a Paper server distribution. You need JDK 25 and an internet connection.
 
-[![YourKit-Logo](https://www.yourkit.com/images/yklogo.png)](https://www.yourkit.com/)
+```powershell
+.\gradlew.bat :paper-server:createPaperclipJar
+```
 
-[YourKit](https://www.yourkit.com/), makers of the outstanding java profiler, support open source projects of all kinds with their full featured [Java](https://www.yourkit.com/java/profiler) and [.NET](https://www.yourkit.com/.net/profiler) application profilers. We thank them for granting Paper an OSS license so that we can make our software the best it can be.
+The runnable server JAR is written to:
 
-All our sponsors!  
-[![Sponsor Image](https://raw.githubusercontent.com/PaperMC/papermc.io/data/sponsors.png)](https://papermc.io/sponsors)
+```text
+paper-server/build/libs/paper-paperclip-26.2.local-SNAPSHOT.jar
+```
+
+## Development notes
+
+- The server's own build requires JDK 25.
+- A plugin project uses the Java version declared by its own Maven or Gradle build.
+- Build output folders such as `target`, `build`, and `out` are ignored by the watcher to avoid refresh loops.
+- PaperLive supports Java/Kotlin source, plugin resources, and Maven/Gradle configuration changes.
+
+For a more detailed project walkthrough, see [PAPERLIVE_DEVELOPMENT.md](PAPERLIVE_DEVELOPMENT.md).

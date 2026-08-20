@@ -2,6 +2,7 @@ package org.bukkit.craftbukkit.scheduler;
 
 import java.util.function.Consumer;
 
+import io.papermc.paper.plugin.manager.PaperLiveClassLoaderScope;
 import org.bukkit.Bukkit;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.scheduler.BukkitTask;
@@ -74,11 +75,23 @@ public class CraftTask implements BukkitTask, Runnable { // Spigot
 
     @Override
     public void run() {
+        if (this.plugin == null) {
+            this.runTaskBody();
+            return;
+        }
+
+        try (PaperLiveClassLoaderScope ignored = PaperLiveClassLoaderScope.open(this.plugin)) {
+            this.runTaskBody();
+        }
+    }
+
+    private void runTaskBody() {
         if (this.rTask != null) {
             this.rTask.run();
-        } else {
-            this.cTask.accept(this);
+            return;
         }
+
+        this.cTask.accept(this);
     }
 
     long getCreatedAt() {

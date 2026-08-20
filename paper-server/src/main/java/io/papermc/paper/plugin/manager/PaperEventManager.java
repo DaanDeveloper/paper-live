@@ -29,9 +29,11 @@ import java.util.logging.Level;
 class PaperEventManager {
 
     private final Server server;
+    private final PaperLiveRuntimeRegistry paperLiveRuntimeRegistry;
 
-    public PaperEventManager(Server server) {
+    public PaperEventManager(@NotNull Server server, @NotNull PaperLiveRuntimeRegistry paperLiveRuntimeRegistry) {
         this.server = server;
+        this.paperLiveRuntimeRegistry = paperLiveRuntimeRegistry;
     }
 
     // SimplePluginManager
@@ -50,7 +52,7 @@ class PaperEventManager {
                 continue;
             }
 
-            try {
+            try (PaperLiveClassLoaderScope ignored = PaperLiveClassLoaderScope.open(registration.getPlugin())) {
                 registration.callEvent(event);
             } catch (AuthorNagException ex) {
                 Plugin plugin = registration.getPlugin();
@@ -80,10 +82,15 @@ class PaperEventManager {
             throw new IllegalPluginAccessException("Plugin attempted to register " + listener + " while not enabled");
         }
 
-        for (Map.Entry<Class<? extends Event>, Set<RegisteredListener>> entry : this.createRegisteredListeners(listener, plugin).entrySet()) {
+        Map<Class<? extends Event>, Set<RegisteredListener>> registrations = this.createRegisteredListeners(listener, plugin);
+        int registrationCount = 0;
+
+        for (Map.Entry<Class<? extends Event>, Set<RegisteredListener>> entry : registrations.entrySet()) {
             this.getEventListeners(this.getRegistrationClass(entry.getKey())).registerAll(entry.getValue());
+            registrationCount += entry.getValue().size();
         }
 
+        this.paperLiveRuntimeRegistry.recordEventRegistrations(plugin, registrationCount);
     }
 
     public void registerEvent(@NotNull Class<? extends Event> event, @NotNull Listener listener, @NotNull EventPriority priority, @NotNull EventExecutor executor, @NotNull Plugin plugin) {
@@ -96,6 +103,7 @@ class PaperEventManager {
         }
 
         this.getEventListeners(event).register(new RegisteredListener(listener, executor, priority, plugin, ignoreCancelled));
+        this.paperLiveRuntimeRegistry.recordEventRegistrations(plugin, 1);
     }
 
     @NotNull
