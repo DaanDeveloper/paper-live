@@ -7,7 +7,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.minecraft.server.MinecraftServer;
-import org.bukkit.Bukkit;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 
@@ -68,8 +67,9 @@ final class PaperLiveRefreshService {
 
     private static void replacePlugins(@NotNull PaperLiveProjectCompiler.CompilationResult compilation) {
         try {
-            PaperLiveFeedback.info("Compilation succeeded. Quiescing plugin resources...");
-            PaperPluginManagerImpl.PaperLiveRefreshResult preparation = PaperPluginManagerImpl.getInstance().preparePaperLiveRefresh();
+            PaperLiveFeedback.info("Compilation succeeded. Quiescing PaperLive plugin resources...");
+            PaperPluginManagerImpl pluginManager = PaperPluginManagerImpl.getInstance();
+            PaperPluginManagerImpl.PaperLiveRefreshResult preparation = pluginManager.preparePaperLiveRefresh(compilation.pluginNames());
 
             if (!preparation.successful()) {
                 PaperLiveFeedback.error("Refresh blocked; existing plugins were restored.");
@@ -86,8 +86,7 @@ final class PaperLiveRefreshService {
                 return;
             }
 
-            PaperLiveProjectCompiler.skipNextCompilation();
-            Bukkit.getServer().reload();
+            pluginManager.loadPaperLivePlugins(compilation.runtimeJars());
             PaperLiveFeedback.success("Source projects compiled and refreshed successfully.");
         } catch (Throwable throwable) {
             LOGGER.error("[PaperLive] Refresh failed", throwable);

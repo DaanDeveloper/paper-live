@@ -2933,6 +2933,7 @@ public class CraftPlayer extends CraftHumanEntity implements Player, PluginMessa
 
     @Override
     public void showBossBar(final net.kyori.adventure.bossbar.BossBar bar) {
+        io.papermc.paper.plugin.manager.PaperPluginManagerImpl.getInstance().trackPaperLiveAdventureBossBar(bar);
         net.kyori.adventure.bossbar.BossBarImplementation.get(bar, io.papermc.paper.adventure.BossBarImplementationImpl.class).playerShow(this);
         if (this.activeBossBars == null) {
             this.activeBossBars = new HashSet<>();

@@ -38,7 +38,9 @@ final class PaperLiveProjectCompiler {
     private static final String RUNTIME_DIRECTORY = ".paperlive-runtime";
     private static final Duration BUILD_TIMEOUT = Duration.ofMinutes(5);
     private static final AtomicBoolean SKIP_NEXT_COMPILATION = new AtomicBoolean();
+    private static final Pattern PLUGIN_NAME = Pattern.compile("^\\s*name\\s*:\\s*['\\\"]?([^\\s'\\\"#]+)");
     private static final Pattern PLUGIN_MAIN_CLASS = Pattern.compile("^\\s*main\\s*:\\s*['\\\"]?([^\\s'\\\"#]+)");
+    private static final List<String> PLUGIN_DESCRIPTORS = List.of("plugin.yml", "paper-plugin.yml");
 
     private PaperLiveProjectCompiler() {
     }
@@ -125,13 +127,19 @@ final class PaperLiveProjectCompiler {
             return null;
         }
 
-        Path pluginJar = findPluginJar(buildSystem.outputDirectory(projectDirectory));
+        Path pluginJar = findPluginJar(projectDirectory, buildSystem.outputDirectory(projectDirectory));
         if (pluginJar == null) {
             logger.error("[PaperLive] Build succeeded for '{}', but no JAR with plugin.yml was found in {}", projectName, buildSystem.outputDirectory(projectDirectory));
             return null;
         }
 
-        return new BuildArtifact(projectName, pluginJar);
+        String pluginName = findPluginName(pluginJar);
+        if (pluginName == null) {
+            logger.error("[PaperLive] Build succeeded for '{}', but its plugin descriptor has no name", projectName);
+            return null;
+        }
+
+        return new BuildArtifact(projectName, pluginName, pluginJar);
     }
 
     /**
@@ -192,29 +200,69 @@ final class PaperLiveProjectCompiler {
      * @param outputDirectory the Gradle or Maven output directory
      * @return a plugin JAR, or {@code null} when no valid output exists
      */
-    static @Nullable Path findPluginJar(@NotNull Path outputDirectory) {
-        if (!Files.isDirectory(outputDirectory)) {
+    static @Nullable Path findPluginJar(@NotNull Path projectDirectory, @NotNull Path outputDirectory) {
+        Stream<Path> paths;
+
+        try {
+            // Single-module builds use build/libs or target directly. Multi-module projects
+            // publish from child modules, so find the newest valid Bukkit plugin JAR anywhere
+            // in the project tree instead of assuming a specific module name or layout.
+            paths = Files.isDirectory(outputDirectory)
+                ? Stream.concat(Files.list(outputDirectory), Files.walk(projectDirectory, 6))
+                : Files.walk(projectDirectory, 6);
+        } catch (IOException exception) {
             return null;
         }
 
-        try (Stream<Path> paths = Files.list(outputDirectory)) {
+        try (paths) {
             return paths
+                .filter(Files::isRegularFile)
                 .filter(path -> path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".jar"))
                 .filter(PaperLiveProjectCompiler::containsPluginDescriptor)
                 .max(Comparator.comparing(PaperLiveProjectCompiler::lastModifiedTime))
                 .orElse(null);
-        } catch (IOException exception) {
-            return null;
         }
     }
 
     private static boolean containsPluginDescriptor(@NotNull Path jarFile) {
         try (JarFile jar = new JarFile(jarFile.toFile())) {
-            JarEntry pluginDescriptor = jar.getJarEntry("plugin.yml");
-            return pluginDescriptor != null && containsDeclaredMainClass(jar, pluginDescriptor);
+            for (String descriptorName : PLUGIN_DESCRIPTORS) {
+                JarEntry pluginDescriptor = jar.getJarEntry(descriptorName);
+
+                if (pluginDescriptor != null && containsDeclaredMainClass(jar, pluginDescriptor)) {
+                    return true;
+                }
+            }
+
+            return false;
         } catch (IOException exception) {
             return false;
         }
+    }
+
+    private static @Nullable String findPluginName(@NotNull Path jarFile) {
+        try (JarFile jar = new JarFile(jarFile.toFile())) {
+            for (String descriptorName : PLUGIN_DESCRIPTORS) {
+                JarEntry descriptor = jar.getJarEntry(descriptorName);
+                if (descriptor == null) {
+                    continue;
+                }
+
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(jar.getInputStream(descriptor), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        Matcher pluginName = PLUGIN_NAME.matcher(line);
+                        if (pluginName.find()) {
+                            return pluginName.group(1);
+                        }
+                    }
+                }
+            }
+        } catch (IOException exception) {
+            return null;
+        }
+
+        return null;
     }
 
     /**
@@ -340,8 +388,21 @@ final class PaperLiveProjectCompiler {
         boolean successful() {
             return this.runtimeDirectory != null && this.failedProjects.isEmpty();
         }
+
+        @NotNull List<String> pluginNames() {
+            return this.buildArtifacts.stream().map(BuildArtifact::pluginName).toList();
+        }
+
+        @NotNull List<Path> runtimeJars() {
+            if (this.runtimeDirectory == null) {
+                return List.of();
+            }
+            return this.buildArtifacts.stream()
+                .map(artifact -> this.runtimeDirectory.resolve("paperlive-" + artifact.projectName() + ".jar"))
+                .toList();
+        }
     }
 
-    private record BuildArtifact(@NotNull String projectName, @NotNull Path pluginJar) {
+    private record BuildArtifact(@NotNull String projectName, @NotNull String pluginName, @NotNull Path pluginJar) {
     }
 }
