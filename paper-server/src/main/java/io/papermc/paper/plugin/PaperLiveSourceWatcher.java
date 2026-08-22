@@ -58,7 +58,7 @@ public final class PaperLiveSourceWatcher implements Runnable {
         AutomaticRefreshConfiguration configuration = loadAutomaticRefreshConfiguration(pluginDirectory);
 
         if (!configuration.enabled()) {
-            LOGGER.info("[PaperLive] Automatic source refresh is disabled. Use /paperlive refresh to rebuild projects.");
+            LOGGER.info("[PaperLive] Automatic source refresh is disabled. Use /refresh to rebuild projects.");
             return;
         }
 

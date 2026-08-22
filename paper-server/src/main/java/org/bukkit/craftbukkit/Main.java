@@ -115,13 +115,13 @@ public class Main {
                         .defaultsTo(new File("spigot.yml"))
                         .describedAs("Yml file");
 
-                this.acceptsAll(asList("paper-dir", "paper-settings-directory"), "Directory for Paper settings")
+                this.acceptsAll(asList("paper-dir", "paper-settings-directory"), "Directory for PaperLive settings")
                         .withRequiredArg()
                         .ofType(File.class)
                         .defaultsTo(new File(io.papermc.paper.configuration.PaperConfigurations.CONFIG_DIR))
                         .describedAs("Config directory");
 
-                this.acceptsAll(asList("paper", "paper-settings"), "File for Paper settings")
+                this.acceptsAll(asList("paper", "paper-settings"), "File for PaperLive settings")
                         .withRequiredArg()
                         .ofType(File.class)
                         .defaultsTo(new File("paper.yml"))

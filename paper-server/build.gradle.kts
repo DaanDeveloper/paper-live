@@ -160,6 +160,7 @@ dependencies {
 }
 
 tasks.jar {
+    archiveBaseName.set("paperlive-server")
     manifest {
         val git = Git(rootProject.layout.projectDirectory.path)
         val mcVersion = rootProject.providers.gradleProperty("mcVersion").get()
@@ -188,6 +189,14 @@ tasks.jar {
             attributes("$tld/bukkit", "Sealed" to true)
         }
     }
+}
+
+tasks.createBundlerJar {
+    outputZip.set(layout.buildDirectory.file("libs/paperlive-bundler-${project.version}.jar"))
+}
+
+tasks.createPaperclipJar {
+    outputZip.set(layout.buildDirectory.file("libs/paperlive-${project.version}.jar"))
 }
 
 // Compile tests with -parameters for better junit parameterized test names
