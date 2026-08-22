@@ -5,16 +5,10 @@
 # of the PR relating to this action.
 
 name: Build Paper
+# Automatic push and pull-request builds are temporarily disabled.
+# To re-enable them, restore the `push` and `pull_request` triggers below.
 on:
-  push:
-    branches-ignore:
-      - feature/paperlive-runtime-refresh
-  pull_request:
-    types:
-      - opened
-      - reopened
-      - synchronize
-      - labeled
+  workflow_dispatch:
 
 jobs:
   build:
