@@ -38,7 +38,7 @@ class PaperLiveProjectCompilerTest {
         createJar(plainJar, "not-plugin.yml");
         createJar(pluginJar, "plugin.yml");
 
-        assertEquals(pluginJar, PaperLiveProjectCompiler.findPluginJar(outputDirectory));
+        assertEquals(pluginJar, PaperLiveProjectCompiler.findPluginJar(directory, outputDirectory));
     }
 
     @Test
@@ -46,13 +46,20 @@ class PaperLiveProjectCompilerTest {
         Path outputDirectory = Files.createDirectories(directory.resolve("build/libs"));
         createJar(outputDirectory.resolve("plain.jar"), "not-plugin.yml");
 
-        assertNull(PaperLiveProjectCompiler.findPluginJar(outputDirectory));
+        assertNull(PaperLiveProjectCompiler.findPluginJar(directory, outputDirectory));
     }
 
     private static void createJar(Path jarPath, String entryName) throws IOException {
         try (JarOutputStream output = new JarOutputStream(Files.newOutputStream(jarPath))) {
             output.putNextEntry(new JarEntry(entryName));
+            if (entryName.equals("plugin.yml")) {
+                output.write("name: TestPlugin\nmain: example.TestPlugin\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
             output.closeEntry();
+            if (entryName.equals("plugin.yml")) {
+                output.putNextEntry(new JarEntry("example/TestPlugin.class"));
+                output.closeEntry();
+            }
         }
     }
 }

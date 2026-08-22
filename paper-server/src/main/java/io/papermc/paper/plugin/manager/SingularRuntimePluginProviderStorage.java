@@ -24,11 +24,19 @@ import java.util.Optional;
 class SingularRuntimePluginProviderStorage extends ServerPluginProviderStorage {
 
     private final MetaDependencyTree dependencyTree;
+    private final boolean allowPaperPlugins;
+    private final boolean registerWithLaunchHandler;
     private PluginProvider<JavaPlugin> lastProvider;
     private JavaPlugin singleLoaded;
 
     SingularRuntimePluginProviderStorage(MetaDependencyTree dependencyTree) {
+        this(dependencyTree, false, true);
+    }
+
+    SingularRuntimePluginProviderStorage(MetaDependencyTree dependencyTree, boolean allowPaperPlugins, boolean registerWithLaunchHandler) {
         this.dependencyTree = dependencyTree;
+        this.allowPaperPlugins = allowPaperPlugins;
+        this.registerWithLaunchHandler = registerWithLaunchHandler;
     }
 
     @Override
@@ -37,13 +45,15 @@ class SingularRuntimePluginProviderStorage extends ServerPluginProviderStorage {
         if (this.lastProvider != null) {
             SneakyThrow.sneaky(new InvalidPluginException("Plugin registered two JavaPlugins"));
         }
-        if (provider instanceof PaperPluginParent.PaperServerPluginProvider) {
+        if (!this.allowPaperPlugins && provider instanceof PaperPluginParent.PaperServerPluginProvider) {
             throw new IllegalStateException("Cannot register paper plugins during runtime!");
         }
         this.lastProvider = provider;
         // Register the provider into the server entrypoint, this allows it to show in /plugins correctly.
         // Generally it might be better in the future to make a separate storage, as putting it into the entrypoint handlers doesn't make much sense.
-        LaunchEntryPointHandler.INSTANCE.register(Entrypoint.PLUGIN, provider);
+        if (this.registerWithLaunchHandler) {
+            LaunchEntryPointHandler.INSTANCE.register(Entrypoint.PLUGIN, provider);
+        }
     }
 
     @Override

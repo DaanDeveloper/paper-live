@@ -44,6 +44,7 @@ public final class CraftScoreboardManager implements ScoreboardManager {
             scoreboard.registeredGlobally = true;
             this.scoreboards.add(scoreboard);
         }
+        io.papermc.paper.plugin.manager.PaperPluginManagerImpl.getInstance().trackPaperLiveScoreboard(scoreboard);
         return scoreboard;
     }
 

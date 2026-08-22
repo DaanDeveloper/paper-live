@@ -25,6 +25,8 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
@@ -116,14 +118,57 @@ public class PaperPluginManagerImpl implements PluginManager, DependencyContext 
         this.instanceManager.disablePlugin(plugin);
     }
 
+    public void trackPaperLiveBossBar(@NotNull org.bukkit.boss.BossBar bossBar) {
+        Plugin plugin = this.instanceManager.getPluginForCurrentContext();
+        if (plugin != null) {
+            this.paperLiveRuntimeRegistry.recordBossBar(plugin, bossBar);
+        }
+    }
+
+    public void trackPaperLiveAdventureBossBar(@NotNull net.kyori.adventure.bossbar.BossBar bossBar) {
+        Plugin plugin = this.instanceManager.getPluginForCurrentContext();
+        if (plugin != null) {
+            this.paperLiveRuntimeRegistry.recordAdventureBossBar(plugin, bossBar);
+        }
+    }
+
+    public void trackPaperLiveScoreboard(@NotNull org.bukkit.scoreboard.Scoreboard scoreboard) {
+        Plugin plugin = this.instanceManager.getPluginForCurrentContext();
+        if (plugin != null) {
+            this.paperLiveRuntimeRegistry.recordScoreboard(plugin, scoreboard);
+        }
+    }
+
     /**
-     * Quiesces every loaded plugin before PaperLive replaces their classloaders.
+     * Quiesces only the named PaperLive plugins before replacing their classloaders.
      *
      * @return preparation result containing any resources that refused to stop
      */
-    public @NotNull PaperLiveRefreshResult preparePaperLiveRefresh() {
-        PaperPluginInstanceManager.PaperLiveRefreshPreparation preparation = this.instanceManager.preparePaperLiveRefresh();
+    public @NotNull PaperLiveRefreshResult preparePaperLiveRefresh(@NotNull List<String> pluginNames) {
+        PaperPluginInstanceManager.PaperLiveRefreshPreparation preparation = this.instanceManager.preparePaperLiveRefresh(pluginNames);
         return new PaperLiveRefreshResult(preparation.successful(), preparation.blockers());
+    }
+
+    public void loadPaperLivePlugins(@NotNull List<Path> pluginJars) throws InvalidPluginException, UnknownDependencyException {
+        List<Plugin> loadedPlugins = new ArrayList<>();
+        for (Path pluginJar : pluginJars) {
+            Plugin plugin = this.instanceManager.loadPaperLivePlugin(pluginJar);
+            if (plugin == null) {
+                throw new InvalidPluginException("PaperLive runtime JAR is not a supported plugin: " + pluginJar);
+            }
+            loadedPlugins.add(plugin);
+        }
+
+        for (Plugin plugin : loadedPlugins) {
+            for (Permission permission : plugin.getDescription().getPermissions()) {
+                if (this.permissionManager.getPermission(permission.getName()) == null) {
+                    this.permissionManager.addPermission(permission);
+                }
+            }
+            this.instanceManager.enablePlugin(plugin);
+        }
+
+        ((CraftServer) Bukkit.getServer()).syncCommands();
     }
 
     /**

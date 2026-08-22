@@ -28,6 +28,7 @@ import org.bukkit.Server;
 import org.bukkit.World;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandMap;
+import org.bukkit.command.PluginIdentifiableCommand;
 import org.bukkit.command.PluginCommandYamlParser;
 import org.bukkit.craftbukkit.util.CraftMagicNumbers;
 import org.bukkit.event.HandlerList;
@@ -75,6 +76,16 @@ class PaperPluginInstanceManager {
         return this.plugins.toArray(new Plugin[0]);
     }
 
+    synchronized @Nullable Plugin getPluginForCurrentContext() {
+        ClassLoader contextClassLoader = Thread.currentThread().getContextClassLoader();
+        for (Plugin plugin : this.plugins) {
+            if (plugin.getClass().getClassLoader() == contextClassLoader) {
+                return plugin;
+            }
+        }
+        return null;
+    }
+
     public boolean isPluginEnabled(@NotNull String name) {
         Plugin plugin = this.getPlugin(name);
 
@@ -103,7 +114,17 @@ class PaperPluginInstanceManager {
 
     // InvalidDescriptionException is never used, because the old JavaPluginLoader would wrap the exception.
     public @Nullable Plugin loadPlugin(@NotNull Path path) throws InvalidPluginException, UnknownDependencyException {
-        RuntimePluginEntrypointHandler<SingularRuntimePluginProviderStorage> runtimePluginEntrypointHandler = new RuntimePluginEntrypointHandler<>(new SingularRuntimePluginProviderStorage(this.dependencyTree));
+        return this.loadPlugin(path, false);
+    }
+
+    @Nullable Plugin loadPaperLivePlugin(@NotNull Path path) throws InvalidPluginException, UnknownDependencyException {
+        return this.loadPlugin(path, true);
+    }
+
+    private @Nullable Plugin loadPlugin(@NotNull Path path, boolean paperLive) throws InvalidPluginException, UnknownDependencyException {
+        RuntimePluginEntrypointHandler<SingularRuntimePluginProviderStorage> runtimePluginEntrypointHandler = new RuntimePluginEntrypointHandler<>(
+            new SingularRuntimePluginProviderStorage(this.dependencyTree, paperLive, !paperLive)
+        );
 
         try {
             path = FILE_PROVIDER_SOURCE.prepareContext(path);
@@ -332,24 +353,19 @@ class PaperPluginInstanceManager {
 
     }
 
-    synchronized @NotNull PaperLiveRefreshPreparation preparePaperLiveRefresh() {
-        Plugin[] loadedPlugins = this.getPlugins();
-        List<String> preflightBlockers = new ArrayList<>();
-
-        for (Plugin plugin : loadedPlugins) {
-            this.addPaperLiveThreadBlockers(plugin.getPluginMeta().getDisplayName(), PaperLiveThreadQuiescer.stopOwnedThreads(plugin), preflightBlockers);
-        }
-
-        if (!preflightBlockers.isEmpty()) {
-            return new PaperLiveRefreshPreparation(false, List.copyOf(preflightBlockers));
-        }
+    synchronized @NotNull PaperLiveRefreshPreparation preparePaperLiveRefresh(@NotNull List<String> pluginNames) {
+        List<Plugin> loadedPlugins = pluginNames.stream()
+            .map(this::getPlugin)
+            .filter(java.util.Objects::nonNull)
+            .distinct()
+            .toList();
 
         this.preparingPaperLiveRefresh = true;
         this.deferredPaperLiveClassLoaders.clear();
         this.paperLiveRefreshBlockers.clear();
 
-        for (int index = loadedPlugins.length - 1; index >= 0; index--) {
-            this.disablePlugin(loadedPlugins[index]);
+        for (int index = loadedPlugins.size() - 1; index >= 0; index--) {
+            this.disablePlugin(loadedPlugins.get(index));
         }
 
         this.preparingPaperLiveRefresh = false;
@@ -367,12 +383,37 @@ class PaperPluginInstanceManager {
             return new PaperLiveRefreshPreparation(false, blockers);
         }
 
+        for (Plugin plugin : loadedPlugins) {
+            this.unregisterPaperLivePlugin(plugin);
+        }
+
         for (ConfiguredPluginClassLoader classLoader : this.deferredPaperLiveClassLoaders) {
             this.closeClassLoader(classLoader, "PaperLive managed plugin");
         }
 
         this.deferredPaperLiveClassLoaders.clear();
         return new PaperLiveRefreshPreparation(true, List.of());
+    }
+
+    private void unregisterPaperLivePlugin(@NotNull Plugin plugin) {
+        this.commandMap.getKnownCommands().entrySet().removeIf(entry -> {
+            Command command = entry.getValue();
+            if (command instanceof PluginIdentifiableCommand identifiableCommand && identifiableCommand.getPlugin() == plugin) {
+                command.unregister(this.commandMap);
+                return true;
+            }
+            return false;
+        });
+
+        for (org.bukkit.permissions.Permission permission : plugin.getDescription().getPermissions()) {
+            if (this.pluginManager.getPermission(permission.getName()) == permission) {
+                this.pluginManager.removePermission(permission);
+            }
+        }
+
+        this.plugins.remove(plugin);
+        this.lookupNames.entrySet().removeIf(entry -> entry.getValue() == plugin);
+        this.dependencyTree.remove(plugin.getPluginMeta());
     }
 
     private void addPaperLiveThreadBlockers(@NotNull String pluginName, @NotNull List<PaperLiveThreadQuiescer.ThreadBlocker> threadBlockers, @NotNull List<String> blockers) {

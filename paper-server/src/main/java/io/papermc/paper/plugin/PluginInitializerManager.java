@@ -5,10 +5,12 @@ import io.papermc.paper.configuration.PaperConfigurations;
 import io.papermc.paper.plugin.entrypoint.Entrypoint;
 import io.papermc.paper.plugin.entrypoint.LaunchEntryPointHandler;
 import io.papermc.paper.plugin.provider.PluginProvider;
+import io.papermc.paper.plugin.provider.source.FileProviderSource;
 import io.papermc.paper.plugin.provider.type.paper.PaperPluginParent;
 import io.papermc.paper.plugin.provider.type.spigot.SpigotPluginProvider;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.stream.Stream;
 import joptsimple.OptionSet;
 import net.minecraft.server.dedicated.DedicatedServer;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -107,7 +109,17 @@ public class PluginInitializerManager {
         io.papermc.paper.plugin.util.EntrypointUtil.registerProvidersFromSource(io.papermc.paper.plugin.provider.source.DirectoryProviderSource.INSTANCE, pluginSystem.pluginDirectoryPath());
 
         if (paperLiveRuntimeDirectory != null) {
-            io.papermc.paper.plugin.util.EntrypointUtil.registerProvidersFromSource(io.papermc.paper.plugin.provider.source.DirectoryProviderSource.INSTANCE_NO_CREATE, paperLiveRuntimeDirectory);
+            // A second directory remap pass treats normal plugins as stale, which can fail on
+            // locked Windows JARs and prevent PaperLive providers from being registered.
+            try (Stream<Path> runtimeFiles = Files.list(paperLiveRuntimeDirectory)) {
+                runtimeFiles
+                    .filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().endsWith(".jar"))
+                    .sorted()
+                    .forEach(path -> io.papermc.paper.plugin.util.EntrypointUtil.registerProvidersFromSource(
+                        new FileProviderSource(ignored -> "PaperLive runtime JAR '" + path.getFileName() + "'"), path
+                    ));
+            }
         }
         // PaperLive end
 

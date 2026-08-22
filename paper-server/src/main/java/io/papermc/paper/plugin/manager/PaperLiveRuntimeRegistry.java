@@ -2,7 +2,14 @@ package io.papermc.paper.plugin.manager;
 
 import java.util.IdentityHashMap;
 import java.util.Map;
+import java.util.Set;
+import org.bukkit.Bukkit;
+import org.bukkit.boss.BossBar;
+import org.bukkit.boss.KeyedBossBar;
 import org.bukkit.plugin.Plugin;
+import org.bukkit.scoreboard.Objective;
+import org.bukkit.scoreboard.Scoreboard;
+import org.bukkit.scoreboard.Team;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -31,6 +38,18 @@ final class PaperLiveRuntimeRegistry {
         ownership.eventRegistrationCount += registrationCount;
     }
 
+    synchronized void recordBossBar(@NotNull Plugin plugin, @NotNull BossBar bossBar) {
+        this.ownershipByPlugin.computeIfAbsent(plugin, ignored -> new RuntimeOwnership()).bossBars.add(bossBar);
+    }
+
+    synchronized void recordAdventureBossBar(@NotNull Plugin plugin, @NotNull net.kyori.adventure.bossbar.BossBar bossBar) {
+        this.ownershipByPlugin.computeIfAbsent(plugin, ignored -> new RuntimeOwnership()).adventureBossBars.add(bossBar);
+    }
+
+    synchronized void recordScoreboard(@NotNull Plugin plugin, @NotNull Scoreboard scoreboard) {
+        this.ownershipByPlugin.computeIfAbsent(plugin, ignored -> new RuntimeOwnership()).scoreboards.add(scoreboard);
+    }
+
     /**
      * Returns the currently known ownership for one loaded plugin instance.
      *
@@ -44,7 +63,7 @@ final class PaperLiveRuntimeRegistry {
             return RuntimeOwnershipSnapshot.EMPTY;
         }
 
-        return new RuntimeOwnershipSnapshot(ownership.eventRegistrationCount);
+        return ownership.snapshot();
     }
 
     /**
@@ -53,19 +72,61 @@ final class PaperLiveRuntimeRegistry {
      * @param plugin the plugin whose lifecycle has ended
      * @return the final ownership snapshot
      */
-    synchronized @NotNull RuntimeOwnershipSnapshot release(@NotNull Plugin plugin) {
-        RuntimeOwnership ownership = this.ownershipByPlugin.remove(plugin);
+    @NotNull RuntimeOwnershipSnapshot release(@NotNull Plugin plugin) {
+        RuntimeOwnership ownership;
+        synchronized (this) {
+            ownership = this.ownershipByPlugin.remove(plugin);
+        }
 
         if (ownership == null) {
             return RuntimeOwnershipSnapshot.EMPTY;
         }
 
-        return new RuntimeOwnershipSnapshot(ownership.eventRegistrationCount);
+        ownership.releaseResources();
+        return ownership.snapshot();
     }
 
     private static final class RuntimeOwnership {
 
         private int eventRegistrationCount;
+        private final Set<BossBar> bossBars = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+        private final Set<net.kyori.adventure.bossbar.BossBar> adventureBossBars = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+        private final Set<Scoreboard> scoreboards = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+
+        private void releaseResources() {
+            for (BossBar bossBar : this.bossBars) {
+                bossBar.removeAll();
+                bossBar.setVisible(false);
+                if (bossBar instanceof KeyedBossBar keyedBossBar) {
+                    Bukkit.removeBossBar(keyedBossBar.getKey());
+                }
+            }
+
+            for (net.kyori.adventure.bossbar.BossBar bossBar : this.adventureBossBars) {
+                for (org.bukkit.entity.Player player : Bukkit.getOnlinePlayers()) {
+                    player.hideBossBar(bossBar);
+                }
+            }
+
+            Scoreboard mainScoreboard = Bukkit.getScoreboardManager().getMainScoreboard();
+            for (Scoreboard scoreboard : this.scoreboards) {
+                for (org.bukkit.entity.Player player : Bukkit.getOnlinePlayers()) {
+                    if (player.getScoreboard() == scoreboard) {
+                        player.setScoreboard(mainScoreboard);
+                    }
+                }
+                for (Objective objective : java.util.List.copyOf(scoreboard.getObjectives())) {
+                    objective.unregister();
+                }
+                for (Team team : java.util.List.copyOf(scoreboard.getTeams())) {
+                    team.unregister();
+                }
+            }
+        }
+
+        private @NotNull RuntimeOwnershipSnapshot snapshot() {
+            return new RuntimeOwnershipSnapshot(this.eventRegistrationCount, this.bossBars.size(), this.adventureBossBars.size(), this.scoreboards.size());
+        }
     }
 
     /**
@@ -73,8 +134,8 @@ final class PaperLiveRuntimeRegistry {
      *
      * @param eventRegistrationCount the number of event registrations made through Paper
      */
-    record RuntimeOwnershipSnapshot(int eventRegistrationCount) {
+    record RuntimeOwnershipSnapshot(int eventRegistrationCount, int bossBarCount, int adventureBossBarCount, int scoreboardCount) {
 
-        static final RuntimeOwnershipSnapshot EMPTY = new RuntimeOwnershipSnapshot(0);
+        static final RuntimeOwnershipSnapshot EMPTY = new RuntimeOwnershipSnapshot(0, 0, 0, 0);
     }
 }

@@ -2430,7 +2430,9 @@ public final class CraftServer implements Server {
 
     @Override
     public BossBar createBossBar(String title, BarColor color, BarStyle style, BarFlag... flags) {
-        return new CraftBossBar(title, color, style, flags);
+        BossBar bossBar = new CraftBossBar(title, color, style, flags);
+        this.paperPluginManager.trackPaperLiveBossBar(bossBar);
+        return bossBar;
     }
 
     @Override
@@ -2450,6 +2452,7 @@ public final class CraftServer implements Server {
             keyedBossbar.addFlag(flag);
         }
 
+        this.paperPluginManager.trackPaperLiveBossBar(keyedBossbar);
         return keyedBossbar;
     }
 
