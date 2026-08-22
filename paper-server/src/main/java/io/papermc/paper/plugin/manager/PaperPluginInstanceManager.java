@@ -47,6 +47,7 @@ import org.jetbrains.annotations.Nullable;
 class PaperPluginInstanceManager {
 
     private static final FileProviderSource FILE_PROVIDER_SOURCE = new FileProviderSource("File '%s'"::formatted);
+    private static final StackWalker PAPERLIVE_STACK_WALKER = StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE);
 
     private final List<Plugin> plugins = new ArrayList<>();
     private final Map<String, Plugin> lookupNames = new HashMap<>();
@@ -80,6 +81,17 @@ class PaperPluginInstanceManager {
         ClassLoader contextClassLoader = Thread.currentThread().getContextClassLoader();
         for (Plugin plugin : this.plugins) {
             if (plugin.getClass().getClassLoader() == contextClassLoader) {
+                return plugin;
+            }
+        }
+
+        java.util.Set<ClassLoader> stackClassLoaders = PAPERLIVE_STACK_WALKER.walk(frames -> frames
+            .limit(64L)
+            .map(frame -> frame.getDeclaringClass().getClassLoader())
+            .filter(java.util.Objects::nonNull)
+            .collect(java.util.stream.Collectors.toUnmodifiableSet()));
+        for (Plugin plugin : this.plugins) {
+            if (stackClassLoaders.contains(plugin.getClass().getClassLoader())) {
                 return plugin;
             }
         }
@@ -334,7 +346,13 @@ class PaperPluginInstanceManager {
         }
 
         // PaperLive start - Release all supported runtime resources before closing the plugin classloader.
-        this.paperLiveRuntimeRegistry.release(plugin);
+        PaperLiveRuntimeRegistry.RuntimeOwnershipSnapshot releasedResources = this.paperLiveRuntimeRegistry.release(plugin);
+        if (releasedResources.bossBarCount() > 0 || releasedResources.adventureBossBarCount() > 0 || releasedResources.scoreboardCount() > 0) {
+            this.server.getLogger().info("[PaperLive] Released resources for " + pluginName + ": "
+                + releasedResources.bossBarCount() + " boss bars, "
+                + releasedResources.adventureBossBarCount() + " adventure boss bars, "
+                + releasedResources.scoreboardCount() + " scoreboards");
+        }
 
         this.addPaperLiveThreadBlockers(pluginName, PaperLiveThreadQuiescer.stopOwnedThreads(plugin), this.paperLiveRefreshBlockers);
 
