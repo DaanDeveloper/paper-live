@@ -149,6 +149,38 @@ public class PaperPluginManagerImpl implements PluginManager, DependencyContext 
         return new PaperLiveRefreshResult(preparation.successful(), preparation.blockers());
     }
 
+    /** Fully unloads one Bukkit plugin from the running server. */
+    public @NotNull PluginUnloadResult unloadPlugin(@NotNull String pluginName, boolean includeDependents) {
+        Plugin plugin = this.instanceManager.getPlugin(pluginName);
+        if (plugin == null) {
+            return new PluginUnloadResult(false, false, List.of(), List.of());
+        }
+
+        List<String> dependentPlugins = this.instanceManager.dependentPluginNames(plugin);
+        if (!includeDependents && !dependentPlugins.isEmpty()) {
+            return new PluginUnloadResult(false, true, dependentPlugins, List.of());
+        }
+
+        PaperPluginInstanceManager.PaperLiveRefreshPreparation preparation = this.instanceManager.preparePluginUnload(plugin);
+        return new PluginUnloadResult(preparation.successful(), true, dependentPlugins, preparation.blockers());
+    }
+
+    /** Loads and enables one conventional Bukkit plugin JAR at runtime. */
+    public @NotNull Plugin loadBukkitPlugin(@NotNull Path pluginJar) throws InvalidPluginException, UnknownDependencyException {
+        Plugin plugin = this.instanceManager.loadPlugin(pluginJar);
+        if (plugin == null) {
+            throw new InvalidPluginException("Plugin JAR is not a supported Bukkit plugin: " + pluginJar);
+        }
+        for (Permission permission : plugin.getDescription().getPermissions()) {
+            if (this.permissionManager.getPermission(permission.getName()) == null) {
+                this.permissionManager.addPermission(permission);
+            }
+        }
+        this.instanceManager.enablePlugin(plugin);
+        ((CraftServer) Bukkit.getServer()).syncCommands();
+        return plugin;
+    }
+
     public void loadPaperLivePlugins(@NotNull List<Path> pluginJars) throws InvalidPluginException, UnknownDependencyException {
         List<Plugin> loadedPlugins = new ArrayList<>();
         for (Path pluginJar : pluginJars) {
@@ -178,6 +210,9 @@ public class PaperPluginManagerImpl implements PluginManager, DependencyContext 
      * @param blockers resources that prevented safe classloader replacement
      */
     public record PaperLiveRefreshResult(boolean successful, @NotNull List<String> blockers) {
+    }
+
+    public record PluginUnloadResult(boolean successful, boolean found, @NotNull List<String> dependents, @NotNull List<String> blockers) {
     }
 
     @Override

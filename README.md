@@ -9,6 +9,7 @@ It is intended for local plugin development: edit source code, wait for the conf
 - Builds Maven and Gradle plugin projects at server startup.
 - Keeps generated runtime JARs in `plugins/.paperlive-runtime/`, separate from source code.
 - Reloads projects with `/paperlive refresh` or `/plive refresh`.
+- Loads Bukkit-plugin JARs from `plugins/` and fully unloads active Bukkit plugins with `/plive load <plugin>` and `/plive unload <plugin>`.
 - Optionally watches source changes and refreshes only after a configurable period without edits.
 - Stops the refresh when plugin-owned threads cannot be shut down safely, and logs the responsible thread.
 - Rejects incomplete build JARs before they can enter the runtime directory.
@@ -56,6 +57,8 @@ Use these commands as an operator:
 | Command | Purpose |
 | --- | --- |
 | `/paperlive refresh` or `/plive refresh` | Build all source projects and reload them. |
+| `/paperlive load <project-or-plugin>` | Build a matching source project, or load a matching JAR from `plugins/`. |
+| `/paperlive unload <plugin>` | Fully unregister an active Bukkit plugin, including its commands and classloader. |
 | `/paperlive projects` | List detected PaperLive projects. |
 | `/paperlive help` | Show PaperLive command help. |
 

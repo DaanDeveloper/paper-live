@@ -167,7 +167,7 @@ public class PaperVersionCommand {
            final Component message = Component.textOfChildren(
                Component.text(Bukkit.getVersionMessage(), NamedTextColor.WHITE),
                Component.newline(),
-               this.versionFetcher.getVersionMessage()
+               Component.text("You are running a PaperLive build.", NamedTextColor.GREEN)
            );
 
            return new ComputedVersion(
