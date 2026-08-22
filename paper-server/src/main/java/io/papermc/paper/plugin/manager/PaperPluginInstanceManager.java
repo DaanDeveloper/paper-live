@@ -19,9 +19,12 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.logging.Level;
 import org.bukkit.Bukkit;
 import org.bukkit.Server;
@@ -51,6 +54,7 @@ class PaperPluginInstanceManager {
 
     private final List<Plugin> plugins = new ArrayList<>();
     private final Map<String, Plugin> lookupNames = new HashMap<>();
+    private final Set<Plugin> paperLivePlugins = Collections.newSetFromMap(new IdentityHashMap<>());
 
     private final PluginManager pluginManager;
     private final CommandMap commandMap;
@@ -122,6 +126,9 @@ class PaperPluginInstanceManager {
         }
 
         this.dependencyTree.add(configuration);
+        if (this.isPaperLiveRuntimePlugin(provided)) {
+            this.paperLivePlugins.add(provided);
+        }
     }
 
     // InvalidDescriptionException is never used, because the old JavaPluginLoader would wrap the exception.
@@ -130,7 +137,11 @@ class PaperPluginInstanceManager {
     }
 
     @Nullable Plugin loadPaperLivePlugin(@NotNull Path path) throws InvalidPluginException, UnknownDependencyException {
-        return this.loadPlugin(path, true);
+        Plugin plugin = this.loadPlugin(path, true);
+        if (plugin != null) {
+            this.paperLivePlugins.add(plugin);
+        }
+        return plugin;
     }
 
     private @Nullable Plugin loadPlugin(@NotNull Path path, boolean paperLive) throws InvalidPluginException, UnknownDependencyException {
@@ -204,6 +215,7 @@ class PaperPluginInstanceManager {
             this.disablePlugins();
             this.plugins.clear();
             this.lookupNames.clear();
+            this.paperLivePlugins.clear();
         }
     }
 
@@ -345,6 +357,10 @@ class PaperPluginInstanceManager {
             this.handlePluginException("Error occurred (in the plugin loader) while removing chunk tickets for " + pluginName + " (Is it up to date?)", ex, plugin); // Paper
         }
 
+        if (!this.paperLivePlugins.contains(plugin) && !this.preparingPaperLiveRefresh) {
+            return;
+        }
+
         // PaperLive start - Release all supported runtime resources before closing the plugin classloader.
         PaperLiveRuntimeRegistry.RuntimeOwnershipSnapshot releasedResources = this.paperLiveRuntimeRegistry.release(plugin);
         if (releasedResources.bossBarCount() > 0 || releasedResources.adventureBossBarCount() > 0 || releasedResources.scoreboardCount() > 0) {
@@ -372,8 +388,32 @@ class PaperPluginInstanceManager {
     }
 
     synchronized @NotNull PaperLiveRefreshPreparation preparePaperLiveRefresh(@NotNull List<String> pluginNames) {
+        return this.preparePluginUnload(pluginNames, true);
+    }
+
+    synchronized @NotNull PaperLiveRefreshPreparation preparePluginUnload(@NotNull Plugin plugin) {
+        List<String> unloadOrder = new ArrayList<>();
+        unloadOrder.add(plugin.getPluginMeta().getName());
+        this.plugins.stream()
+            .filter(candidate -> candidate != plugin)
+            .filter(candidate -> this.dependencyTree.isTransitiveDependency(candidate.getPluginMeta(), plugin.getPluginMeta()))
+            .map(candidate -> candidate.getPluginMeta().getName())
+            .forEach(unloadOrder::add);
+        return this.preparePluginUnload(unloadOrder, false);
+    }
+
+    synchronized @NotNull List<String> dependentPluginNames(@NotNull Plugin plugin) {
+        return this.plugins.stream()
+            .filter(candidate -> candidate != plugin)
+            .filter(candidate -> this.dependencyTree.isTransitiveDependency(candidate.getPluginMeta(), plugin.getPluginMeta()))
+            .map(candidate -> candidate.getPluginMeta().getName())
+            .toList();
+    }
+
+    private @NotNull PaperLiveRefreshPreparation preparePluginUnload(@NotNull List<String> pluginNames, boolean paperLiveOnly) {
         List<Plugin> loadedPlugins = pluginNames.stream()
             .map(this::getPlugin)
+            .filter(plugin -> !paperLiveOnly || this.paperLivePlugins.contains(plugin))
             .filter(java.util.Objects::nonNull)
             .distinct()
             .toList();
@@ -402,7 +442,7 @@ class PaperPluginInstanceManager {
         }
 
         for (Plugin plugin : loadedPlugins) {
-            this.unregisterPaperLivePlugin(plugin);
+            this.unregisterPlugin(plugin);
         }
 
         for (ConfiguredPluginClassLoader classLoader : this.deferredPaperLiveClassLoaders) {
@@ -413,15 +453,16 @@ class PaperPluginInstanceManager {
         return new PaperLiveRefreshPreparation(true, List.of());
     }
 
-    private void unregisterPaperLivePlugin(@NotNull Plugin plugin) {
-        this.commandMap.getKnownCommands().entrySet().removeIf(entry -> {
+    private void unregisterPlugin(@NotNull Plugin plugin) {
+        // CraftCommandMap exposes a Brigadier-backed map whose entry iterator is read-only.
+        // Remove matching commands through the map API using a snapshot instead of removeIf.
+        for (Map.Entry<String, Command> entry : new ArrayList<>(this.commandMap.getKnownCommands().entrySet())) {
             Command command = entry.getValue();
             if (command instanceof PluginIdentifiableCommand identifiableCommand && identifiableCommand.getPlugin() == plugin) {
                 command.unregister(this.commandMap);
-                return true;
+                this.commandMap.getKnownCommands().remove(entry.getKey(), command);
             }
-            return false;
-        });
+        }
 
         for (org.bukkit.permissions.Permission permission : plugin.getDescription().getPermissions()) {
             if (this.pluginManager.getPermission(permission.getName()) == permission) {
@@ -431,7 +472,24 @@ class PaperPluginInstanceManager {
 
         this.plugins.remove(plugin);
         this.lookupNames.entrySet().removeIf(entry -> entry.getValue() == plugin);
+        this.paperLivePlugins.remove(plugin);
         this.dependencyTree.remove(plugin.getPluginMeta());
+    }
+
+    synchronized boolean isPaperLivePlugin(@NotNull Plugin plugin) {
+        return this.paperLivePlugins.contains(plugin);
+    }
+
+    private boolean isPaperLiveRuntimePlugin(@NotNull Plugin plugin) {
+        try {
+            java.net.URL location = plugin.getClass().getProtectionDomain().getCodeSource().getLocation();
+            Path path = Path.of(location.toURI());
+            Path parent = path.getParent();
+            return parent != null && parent.getFileName().toString().equals(".paperlive-runtime")
+                && path.getFileName().toString().startsWith("paperlive-");
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     private void addPaperLiveThreadBlockers(@NotNull String pluginName, @NotNull List<PaperLiveThreadQuiescer.ThreadBlocker> threadBlockers, @NotNull List<String> blockers) {

@@ -107,6 +107,38 @@ final class PaperLiveProjectCompiler {
         return new CompilationResult(runtimeDirectory, List.copyOf(buildArtifacts), List.copyOf(failedProjects));
     }
 
+    /**
+     * Builds one named direct child of the PaperLive projects directory.
+     *
+     * <p>The name is resolved from discovered project directories rather than directly appended to
+     * the path, so a command argument can never escape the source-project directory.</p>
+     */
+    static @NotNull CompilationResult compileProjectDetailed(@NotNull Path pluginDirectory, @NotNull String projectName, @NotNull Logger logger) {
+        Path projectsDirectory = pluginDirectory.resolve(PAPERLIVE_DIRECTORY).resolve(PROJECTS_DIRECTORY);
+        Path runtimeDirectory = pluginDirectory.resolve(RUNTIME_DIRECTORY);
+
+        try {
+            Files.createDirectories(projectsDirectory);
+            Files.createDirectories(runtimeDirectory);
+        } catch (IOException exception) {
+            logger.error("[PaperLive] Cannot prepare project directories", exception);
+            return new CompilationResult(null, List.of(), List.of(projectName));
+        }
+
+        Path projectDirectory = findProjectDirectories(projectsDirectory).stream()
+            .filter(project -> project.getFileName().toString().equalsIgnoreCase(projectName))
+            .findFirst()
+            .orElse(null);
+        if (projectDirectory == null) {
+            return new CompilationResult(runtimeDirectory, List.of(), List.of(projectName));
+        }
+
+        BuildArtifact buildArtifact = compileProject(projectDirectory, runtimeDirectory, logger);
+        return buildArtifact == null
+            ? new CompilationResult(runtimeDirectory, List.of(), List.of(projectDirectory.getFileName().toString()))
+            : new CompilationResult(runtimeDirectory, List.of(buildArtifact), List.of());
+    }
+
     static void skipNextCompilation() {
         SKIP_NEXT_COMPILATION.set(true);
     }
@@ -400,6 +432,10 @@ final class PaperLiveProjectCompiler {
             return this.buildArtifacts.stream()
                 .map(artifact -> this.runtimeDirectory.resolve("paperlive-" + artifact.projectName() + ".jar"))
                 .toList();
+        }
+
+        @NotNull List<Path> sourceJars() {
+            return this.buildArtifacts.stream().map(BuildArtifact::pluginJar).toList();
         }
     }
 
