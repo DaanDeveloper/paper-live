@@ -25,9 +25,12 @@ public final class PaperCommands {
     public static void registerCommands(final MinecraftServer server) {
         COMMANDS.put("paper", new PaperCommand("paper"));
         COMMANDS.put("paperlive", new PaperLiveCommand("paperlive"));
+        for (final String subcommand : PaperLiveCommand.subcommands()) {
+            COMMANDS.put(subcommand, new PaperLiveCommand(subcommand, subcommand));
+        }
 
         COMMANDS.forEach((s, command) -> {
-            String fallbackPrefix = s.equals("paperlive") ? "PaperLive" : "Paper";
+            String fallbackPrefix = command instanceof PaperLiveCommand ? "PaperLive" : "Paper";
             server.server.getCommandMap().register(s, fallbackPrefix, command);
         });
     }

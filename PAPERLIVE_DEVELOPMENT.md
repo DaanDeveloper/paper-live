@@ -35,7 +35,7 @@ When the server starts, PaperLive builds each project, stores the build log in `
 
 ## Refreshing projects
 
-Automatic source refresh waits 30 seconds after the most recent source change, so editor autosave does not rebuild the server while you are typing. Use `/paperlive refresh` (or `/plive refresh`) whenever you want to compile and reload a project immediately.
+Automatic source refresh waits 30 seconds after the most recent source change, so editor autosave does not rebuild the server while you are typing. Use `/refresh` whenever you want to compile and reload a project immediately. The original `/paperlive refresh` and `/plive refresh` forms remain available.
 
 Configure the watcher in `plugins/PaperLive/config.yml` and restart the server:
 
@@ -54,8 +54,9 @@ PaperLive watches relevant project files after server startup. Changes to Java/K
 
 Only operators may use PaperLive's commands:
 
-- `/paperlive refresh` manually rebuilds every source project and reloads plugins without restarting the server process.
-- `/paperlive projects` shows source projects that PaperLive can build.
-- `/paperlive help` shows the command overview.
+- `/refresh` manually rebuilds every source project and reloads plugins without restarting the server process.
+- `/load <plugin>` and `/unload <plugin>` load or unload a plugin.
+- `/projects` shows source projects that PaperLive can build.
+- `/help` shows the command overview.
 
 Compilation and refresh feedback is sent to the console and to online players with the `paperlive.command` permission. The permission defaults to operators. If a plugin-owned thread does not stop after interruption, PaperLive aborts the refresh, restores the existing plugins, and reports the blocking thread instead of loading a second plugin instance.

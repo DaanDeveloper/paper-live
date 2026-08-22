@@ -2,14 +2,14 @@
 
 PaperLive is a development-focused Paper server that builds and reloads ordinary Paper plugins directly from their source projects. Put a Maven or Gradle plugin project in the server's `plugins/PaperLive/projects` folder and PaperLive builds it, prepares an isolated runtime JAR, and loads it like any other plugin.
 
-It is intended for local plugin development: edit source code, wait for the configured quiet period or run `/plive refresh`, then test the new plugin without manually copying JARs around.
+It is intended for local plugin development: edit source code, wait for the configured quiet period or run `/refresh`, then test the new plugin without manually copying JARs around.
 
 ## What PaperLive does
 
 - Builds Maven and Gradle plugin projects at server startup.
 - Keeps generated runtime JARs in `plugins/.paperlive-runtime/`, separate from source code.
-- Reloads projects with `/paperlive refresh` or `/plive refresh`.
-- Loads Bukkit-plugin JARs from `plugins/` and fully unloads active Bukkit plugins with `/plive load <plugin>` and `/plive unload <plugin>`.
+- Reloads projects with `/refresh` (or `/paperlive refresh` or `/plive refresh`).
+- Loads Bukkit-plugin JARs from `plugins/` and fully unloads active Bukkit plugins with `/load <plugin>` and `/unload <plugin>`.
 - Optionally watches source changes and refreshes only after a configurable period without edits.
 - Stops the refresh when plugin-owned threads cannot be shut down safely, and logs the responsible thread.
 - Rejects incomplete build JARs before they can enter the runtime directory.
@@ -22,7 +22,7 @@ PaperLive does not replace normal plugin development. Each project remains a con
 2. Create a normal Paper server directory and run the JAR once.
 3. Place plugin source projects in `plugins/PaperLive/projects/`.
 4. Start the server. PaperLive compiles every supported project before plugin loading.
-5. Edit your plugin and use `/plive refresh`, or let the source watcher refresh it after the configured quiet period.
+5. Edit your plugin and use `/refresh`, or let the source watcher refresh it after the configured quiet period.
 
 Do not copy a PaperLive project's built JAR into `plugins/`. PaperLive already loads its isolated runtime copy; loading both would create duplicate plugins.
 
@@ -56,11 +56,13 @@ Use these commands as an operator:
 
 | Command | Purpose |
 | --- | --- |
-| `/paperlive refresh` or `/plive refresh` | Build all source projects and reload them. |
-| `/paperlive load <project-or-plugin>` | Build a matching source project, or load a matching JAR from `plugins/`. |
-| `/paperlive unload <plugin>` | Fully unregister an active Bukkit plugin, including its commands and classloader. |
-| `/paperlive projects` | List detected PaperLive projects. |
-| `/paperlive help` | Show PaperLive command help. |
+| `/refresh` | Build all source projects and reload them. |
+| `/load <project-or-plugin>` | Build a matching source project, or load a matching JAR from `plugins/`. |
+| `/unload <plugin>` | Fully unregister an active Bukkit plugin, including its commands and classloader. |
+| `/projects` | List detected PaperLive projects. |
+| `/help` | Show PaperLive command help. |
+
+The original `/paperlive <command>` and `/plive <command>` forms remain available for every command.
 
 The default watcher waits 30 seconds after the last relevant file change before refreshing. This works well with IntelliJ autosave: while you are typing, each save restarts the timer instead of repeatedly rebuilding the server.
 
@@ -71,7 +73,7 @@ auto-refresh: true
 auto-refresh-debounce-seconds: 30
 ```
 
-Set `auto-refresh` to `false` to build only through `/plive refresh`. Restart the server after changing this file.
+Set `auto-refresh` to `false` to build only through `/refresh`. Restart the server after changing this file.
 
 ## Build logs and troubleshooting
 

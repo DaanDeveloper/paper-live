@@ -102,7 +102,7 @@ final class PaperLiveRefreshService {
                 PaperLiveFeedback.error("No loaded Bukkit plugin named '" + pluginName + "' was found.");
             } else if (!includeDependents && !result.dependents().isEmpty()) {
                 PaperLiveFeedback.error("'" + pluginName + "' is used by: " + String.join(", ", result.dependents()) + ". It was left loaded.");
-                PaperLiveFeedback.info("To also unload those plugins, run: /plive unload " + pluginName + " dependents");
+                PaperLiveFeedback.info("To also unload those plugins, run: /unload " + pluginName + " dependents");
             } else if (!result.successful()) {
                 PaperLiveFeedback.error("Could not unload '" + pluginName + "'; its runtime resources were restored.");
                 for (String blocker : result.blockers()) {
@@ -196,7 +196,7 @@ final class PaperLiveRefreshService {
             String pluginName = compilation.pluginNames().getFirst();
             PaperPluginManagerImpl pluginManager = PaperPluginManagerImpl.getInstance();
             if (pluginManager.getPlugin(pluginName) != null) {
-                PaperLiveFeedback.error("Bukkit plugin '" + pluginName + "' is already loaded. Run /plive unload " + pluginName + " first.");
+                PaperLiveFeedback.error("Bukkit plugin '" + pluginName + "' is already loaded. Run /unload " + pluginName + " first.");
                 return;
             }
             Path sourceJar = compilation.sourceJars().getFirst();
@@ -268,7 +268,7 @@ final class PaperLiveRefreshService {
             PluginDescriptionFile description = readPluginDescription(pluginJar);
             String pluginName = description == null ? pluginJar.getFileName().toString() : description.getName();
             PaperLiveFeedback.error("'" + pluginName + "' needs: " + String.join(", ", plan.jars().stream().map(path -> path.getFileName().toString()).toList()) + ". It was not loaded.");
-            PaperLiveFeedback.info("To load it with its dependencies, run: /plive load " + pluginName + " dependents");
+            PaperLiveFeedback.info("To load it with its dependencies, run: /load " + pluginName + " dependents");
             return false;
         }
 
@@ -312,7 +312,7 @@ final class PaperLiveRefreshService {
             if (!plan.jars().isEmpty()) {
                 String dependencies = String.join(", ", plan.jars().stream().map(path -> path.getFileName().toString()).toList());
                 PaperLiveFeedback.error("Required Bukkit plugin(s) for '" + description.getName() + "' are not loaded: " + dependencies + ".");
-                PaperLiveFeedback.info("Load them first with: /plive load " + description.getName() + " dependents");
+                PaperLiveFeedback.info("Load them first with: /load " + description.getName() + " dependents");
                 valid = false;
             }
         }
