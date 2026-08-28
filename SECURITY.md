@@ -2,13 +2,17 @@
 
 ## Supported Versions
 
-We generally only fully support the latest version, the same applies to exploits such as server crashes and item
-duplication bugs. In the transition period during larger Minecraft updates, we may still backport important fixes to the
-last minor or major release.
+Security fixes are provided for the latest release and the current development
+branch of PaperLive. Earlier versions may receive a fix at the maintainer's
+discretion.
 
 ## Reporting a Vulnerability
 
-For any issues that are NOT duplication bugs, server/client crashes, or otherwise serious exploits, please open an issue
-through the [Issues tab](https://github.com/PaperMC/Paper/issues).
-For exploits, please [join our Discord](https://discord.gg/papermc) and see the [#paper-exploit-report channel](https://discord.com/channels/289587909051416579/1208749386348101682) for
-further instructions.
+Please do not disclose vulnerabilities in public issues, pull requests, or
+discussions. Report them privately through a
+[GitHub repository security advisory](https://github.com/DaanDeveloper/paper-live/security/advisories/new).
+
+Include a clear description of the issue, affected versions, reproduction
+steps, and any suggested mitigation. You will receive an acknowledgement after
+the report has been reviewed. Disclosure will be coordinated after a fix or
+mitigation is available.
