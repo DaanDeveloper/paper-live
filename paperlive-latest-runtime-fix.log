@@ -1,0 +1,35 @@
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/9.4.1/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+Calculating task graph as configuration cache cannot be reused because output of the external process 'git' has changed.
+
+> Configure project :paper-server
+paperweight-core v2.0.0-beta.21 (running on 'Windows 10')
+
+> Task :paper-api:generateApiVersioningFile UP-TO-DATE
+> Task :paper-server:processLog4jPluginsResources NO-SOURCE
+> Task :paper-api:processResources NO-SOURCE
+> Task :paper-server:downloadMcManifest
+> Task :paper-server:downloadMcVersionManifest UP-TO-DATE
+> Task :paper-server:downloadServerJar UP-TO-DATE
+> Task :paper-server:extractFromBundler UP-TO-DATE
+> Task :paper-server:processResources UP-TO-DATE
+> Task :paper-api:compileJava UP-TO-DATE
+> Task :paper-api:classes UP-TO-DATE
+> Task :paper-api:jar UP-TO-DATE
+> Task :paper-server:compileLog4jPluginsJava UP-TO-DATE
+> Task :paper-server:log4jPluginsClasses UP-TO-DATE
+
+> Task :paper-server:compileJava
+Note: C:\Paperlive\paper-server\src\main\java\io\papermc\paper\plugin\PluginInitializerManager.java uses or overrides a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+
+> Task :paper-server:classes
+> Task :paper-server:jar
+> Task :paper-server:createBundlerJar
+> Task :paper-server:createPaperclipJar
+
+[Incubating] Problems report is available at: file:///C:/Paperlive/build/reports/problems/problems-report.html
+
+BUILD SUCCESSFUL in 2m 33s
+13 actionable tasks: 5 executed, 8 up-to-date
+Configuration cache entry stored.

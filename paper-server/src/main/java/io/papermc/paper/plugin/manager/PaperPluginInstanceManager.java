@@ -325,6 +325,7 @@ class PaperPluginInstanceManager {
 
         try {
             HandlerList.unregisterAll(plugin);
+            io.papermc.paper.plugin.debug.PaperLiveDebugger.instance().removeEventRegistrations(plugin);
         } catch (Throwable ex) {
             this.handlePluginException("Error occurred (in the plugin loader) while unregistering events for "
                 + pluginName + " (Is it up to date?)", ex, plugin); // Paper

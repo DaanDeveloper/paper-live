@@ -21,11 +21,12 @@ class PaperLiveCommandTest {
 
     @Test
     void returnsAllSubcommandsForAnEmptyArgument() {
-        assertEquals(List.of("refresh", "load", "unload", "projects", "help"), PaperLiveCommand.completions(""));
+        assertEquals(List.of("refresh", "load", "unload", "enable", "disable", "projects", "help"), PaperLiveCommand.completions(""));
     }
 
     @Test
     void addsTheDirectCommandAsTheSubcommand() {
         assertEquals(List.of("load", "ExamplePlugin", "dependents"), List.of(PaperLiveCommand.commandArguments("load", new String[] {"ExamplePlugin", "dependents"})));
     }
+
 }

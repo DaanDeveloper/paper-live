@@ -1,6 +1,7 @@
 package io.papermc.paper.threadedregions.scheduler;
 
 import com.mojang.logging.LogUtils;
+import io.papermc.paper.plugin.debug.PaperLiveDebugger;
 import org.bukkit.plugin.IllegalPluginAccessException;
 import org.bukkit.plugin.Plugin;
 import org.slf4j.Logger;
@@ -167,6 +168,8 @@ public final class FoliaAsyncScheduler implements AsyncScheduler {
         private ScheduledFuture<?> delay;
         private int state;
         private long scheduleTarget;
+        private final String paperLiveRegistrationSite;
+        private final Class<?> paperLiveTaskClass;
 
         public AsyncScheduledTask(final Plugin plugin, final long repeatDelay, final Consumer<ScheduledTask> run,
                                   final ScheduledFuture<?> delay, final long firstTarget) {
@@ -176,6 +179,8 @@ public final class FoliaAsyncScheduler implements AsyncScheduler {
             this.delay = delay;
             this.state = delay == null ? STATE_SCHEDULED_EXECUTOR : STATE_ON_TIMER;
             this.scheduleTarget = firstTarget;
+            this.paperLiveRegistrationSite = PaperLiveDebugger.captureTaskRegistrationSite();
+            this.paperLiveTaskClass = run.getClass();
         }
 
         private void setDelay(final ScheduledFuture<?> delay) {
@@ -212,11 +217,25 @@ public final class FoliaAsyncScheduler implements AsyncScheduler {
                 return;
             }
 
+            long startedAt = System.nanoTime();
+            Throwable failure = null;
             try {
                 this.run.accept(this);
             } catch (final Throwable throwable) {
+                failure = throwable;
                 this.plugin.getLogger().log(Level.WARNING, "Async task for " + this.plugin.getDescription().getFullName() + " generated an exception", throwable);
             } finally {
+                PaperLiveDebugger.instance().captureTaskExecution(
+                    this.plugin,
+                    Integer.toHexString(System.identityHashCode(this)),
+                    "PAPER_ASYNC",
+                    this.paperLiveTaskClass,
+                    this.paperLiveRegistrationSite,
+                    true,
+                    repeating,
+                    System.nanoTime() - startedAt,
+                    failure
+                );
                 boolean removeFromTasks = false;
                 synchronized (this) {
                     if (!repeating) {
