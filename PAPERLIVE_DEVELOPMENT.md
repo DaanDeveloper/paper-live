@@ -60,3 +60,19 @@ Only operators may use PaperLive's commands:
 - `/help` shows the command overview.
 
 Compilation and refresh feedback is sent to the console and to online players with the `paperlive.command` permission. The permission defaults to operators. If a plugin-owned thread does not stop after interruption, PaperLive aborts the refresh, restores the existing plugins, and reports the blocking thread instead of loading a second plugin instance.
+
+## Testing with the Dev Tool
+
+Use **Config Guard** before the first refresh to catch malformed YAML and descriptors. After a successful refresh it records a last-known-good configuration baseline.
+
+For repeatable manual tests:
+
+1. Create or select a non-primary disposable world on **Setup**.
+2. Save a named dev snapshot. This includes the world/playerdata and PaperLive source-plugin data folders.
+3. Start a scenario recording for an online player.
+4. Perform the commands and interactions once, then stop and save the scenario.
+5. Restore the snapshot and replay the scenario after later refreshes.
+
+Server-side replay executes recorded commands and verifies the final player state. Event and inventory observations that require real client input remain visible as manual steps. This boundary is intentional: calling a Bukkit event directly is not equivalent to a client packet and vanilla game processing.
+
+When a scenario reliably fails only with a particular source-plugin combination, **Bisect plugin conflict** can isolate one suspect. It only cycles PaperLive source plugins, follows dependent unloads, restores the snapshot before every iteration, and performs a final verification.
