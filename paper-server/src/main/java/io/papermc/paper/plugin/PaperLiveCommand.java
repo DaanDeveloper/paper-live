@@ -15,7 +15,7 @@ import org.jetbrains.annotations.Nullable;
 public final class PaperLiveCommand extends Command {
 
     private static final String PERMISSION = PaperLiveFeedback.PERMISSION;
-    private static final List<String> SUBCOMMANDS = List.of("refresh", "load", "unload", "projects", "help");
+    private static final List<String> SUBCOMMANDS = List.of("refresh", "load", "unload", "enable", "disable", "projects", "help");
     private final @Nullable String fixedSubcommand;
 
     public PaperLiveCommand(@NotNull String name) {
@@ -33,7 +33,7 @@ public final class PaperLiveCommand extends Command {
         this.fixedSubcommand = fixedSubcommand;
         this.description = "PaperLive development commands";
         this.usageMessage = fixedSubcommand == null
-            ? "/paperlive <refresh|load <plugin> [dependents]|unload <plugin> [dependents]|projects|help>"
+            ? "/paperlive <refresh|load <plugin> [dependents]|unload <plugin> [dependents]|enable <plugin> [dependents]|disable <plugin> [dependents]|projects|help>"
             : usageMessage(name, fixedSubcommand);
         if (fixedSubcommand == null) {
             this.setAliases(List.of("plive"));
@@ -52,7 +52,7 @@ public final class PaperLiveCommand extends Command {
 
         final String[] commandArguments = this.commandArguments(arguments);
         if (commandArguments.length == 0 || commandArguments[0].equalsIgnoreCase("help")) {
-            sender.sendMessage("§ePaperLive: §f/refresh §7| §f/load <plugin> [dependents] §7| §f/unload <plugin> [dependents] §7| §f/projects §7(also /paperlive and /plive)");
+            sender.sendMessage("§ePaperLive: §f/refresh §7| §f/load <plugin> [dependents] §7| §f/unload <plugin> [dependents] §7| §f/enable <plugin> [dependents] §7| §f/disable <plugin> [dependents] §7| §f/projects §7(also /paperlive and /plive)");
             return true;
         }
 
@@ -76,6 +76,16 @@ public final class PaperLiveCommand extends Command {
             return true;
         }
 
+        if (commandArguments[0].equalsIgnoreCase("enable") && (commandArguments.length == 2 || (commandArguments.length == 3 && commandArguments[2].equalsIgnoreCase("dependents")))) {
+            PaperLiveRefreshService.requestEnable(commandArguments[1], commandArguments.length == 3);
+            return true;
+        }
+
+        if (commandArguments[0].equalsIgnoreCase("disable") && (commandArguments.length == 2 || (commandArguments.length == 3 && commandArguments[2].equalsIgnoreCase("dependents")))) {
+            PaperLiveRefreshService.requestDisable(commandArguments[1], commandArguments.length == 3);
+            return true;
+        }
+
         sender.sendMessage("§cUsage: " + this.usageMessage);
         return true;
     }
@@ -91,7 +101,7 @@ public final class PaperLiveCommand extends Command {
             return completions(commandArguments[0]);
         }
 
-        if (commandArguments.length == 2 && commandArguments[0].equalsIgnoreCase("load")) {
+        if (commandArguments.length == 2 && (commandArguments[0].equalsIgnoreCase("load") || commandArguments[0].equalsIgnoreCase("enable") || commandArguments[0].equalsIgnoreCase("disable"))) {
             PluginInitializerManager initializerManager = PluginInitializerManager.instance();
             if (initializerManager == null) {
                 return List.of();
@@ -113,21 +123,25 @@ public final class PaperLiveCommand extends Command {
                 pluginJars = List.of();
             }
             String input = commandArguments[1].toLowerCase(java.util.Locale.ROOT);
-            return java.util.stream.Stream.concat(sourceProjects.stream(), pluginJars.stream())
+            java.util.stream.Stream<String> candidates = java.util.stream.Stream.concat(sourceProjects.stream(), pluginJars.stream());
+            if (commandArguments[0].equalsIgnoreCase("disable")) {
+                candidates = java.util.stream.Stream.concat(candidates, java.util.Arrays.stream(Bukkit.getPluginManager().getPlugins()).map(plugin -> plugin.getPluginMeta().getName()));
+            }
+            return candidates
                 .distinct()
                 .filter(candidate -> candidate.toLowerCase(java.util.Locale.ROOT).startsWith(input))
                 .sorted(String.CASE_INSENSITIVE_ORDER)
                 .toList();
         }
 
-        if (commandArguments.length == 2 && commandArguments[0].equalsIgnoreCase("unload")) {
+        if (commandArguments.length == 2 && (commandArguments[0].equalsIgnoreCase("unload") || commandArguments[0].equalsIgnoreCase("disable"))) {
             return java.util.Arrays.stream(Bukkit.getPluginManager().getPlugins())
                 .map(plugin -> plugin.getPluginMeta().getName())
                 .filter(plugin -> plugin.toLowerCase(java.util.Locale.ROOT).startsWith(commandArguments[1].toLowerCase(java.util.Locale.ROOT)))
                 .toList();
         }
 
-        if (commandArguments.length == 3 && (commandArguments[0].equalsIgnoreCase("load") || commandArguments[0].equalsIgnoreCase("unload"))) {
+        if (commandArguments.length == 3 && (commandArguments[0].equalsIgnoreCase("load") || commandArguments[0].equalsIgnoreCase("unload") || commandArguments[0].equalsIgnoreCase("enable") || commandArguments[0].equalsIgnoreCase("disable"))) {
             return "dependents".startsWith(commandArguments[2].toLowerCase(java.util.Locale.ROOT)) ? List.of("dependents") : List.of();
         }
 
@@ -167,7 +181,7 @@ public final class PaperLiveCommand extends Command {
 
     private static @NotNull String usageMessage(@NotNull String name, @NotNull String subcommand) {
         return switch (subcommand) {
-            case "load", "unload" -> "/" + name + " <plugin> [dependents]";
+            case "load", "unload", "enable", "disable" -> "/" + name + " <plugin> [dependents]";
             default -> "/" + name;
         };
     }

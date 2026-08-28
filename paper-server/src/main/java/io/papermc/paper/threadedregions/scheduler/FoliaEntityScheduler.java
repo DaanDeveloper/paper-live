@@ -1,6 +1,7 @@
 package io.papermc.paper.threadedregions.scheduler;
 
 import ca.spottedleaf.concurrentutil.util.ConcurrentUtil;
+import io.papermc.paper.plugin.debug.PaperLiveDebugger;
 import net.minecraft.world.entity.Entity;
 import org.bukkit.craftbukkit.entity.CraftEntity;
 import org.bukkit.plugin.IllegalPluginAccessException;
@@ -124,6 +125,8 @@ public final class FoliaEntityScheduler implements EntityScheduler {
         private Consumer<ScheduledTask> run;
         private Runnable retired;
         private volatile int state;
+        private final String paperLiveRegistrationSite;
+        private final Class<?> paperLiveTaskClass;
 
         private static final VarHandle STATE_HANDLE = ConcurrentUtil.getVarHandle(EntityScheduledTask.class, "state", int.class);
 
@@ -132,6 +135,8 @@ public final class FoliaEntityScheduler implements EntityScheduler {
             this.repeatDelay = repeatDelay;
             this.run = run;
             this.retired = retired;
+            this.paperLiveRegistrationSite = PaperLiveDebugger.captureTaskRegistrationSite();
+            this.paperLiveTaskClass = run.getClass();
         }
 
         private final int getStateVolatile() {
@@ -162,6 +167,8 @@ public final class FoliaEntityScheduler implements EntityScheduler {
 
             final boolean retired = entity.isRemoved();
 
+            long startedAt = System.nanoTime();
+            Throwable failure = null;
             try {
                 if (!retired) {
                     this.run.accept(this);
@@ -171,8 +178,20 @@ public final class FoliaEntityScheduler implements EntityScheduler {
                     }
                 }
             } catch (final Throwable throwable) {
+                failure = throwable;
                 this.plugin.getLogger().log(Level.WARNING, "Entity task for " + this.plugin.getDescription().getFullName() + " generated an exception", throwable);
             } finally {
+                PaperLiveDebugger.instance().captureTaskExecution(
+                    this.plugin,
+                    Integer.toHexString(System.identityHashCode(this)),
+                    "PAPER_ENTITY",
+                    this.paperLiveTaskClass,
+                    this.paperLiveRegistrationSite,
+                    false,
+                    repeating,
+                    System.nanoTime() - startedAt,
+                    failure
+                );
                 boolean reschedule = false;
                  if (!repeating && !retired) {
                     this.setStateVolatile(STATE_FINISHED);

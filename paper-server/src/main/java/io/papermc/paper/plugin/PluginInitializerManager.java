@@ -105,8 +105,9 @@ public class PluginInitializerManager {
         // PaperLive start - Build conventional source plugins before registering their JARs with Paper.
         final Path paperLiveRuntimeDirectory = PaperLiveProjectCompiler.compileProjects(pluginSystem.pluginDirectoryPath(), LOGGER);
 
-        // Register the default plugin directory
-        io.papermc.paper.plugin.util.EntrypointUtil.registerProvidersFromSource(io.papermc.paper.plugin.provider.source.DirectoryProviderSource.INSTANCE, pluginSystem.pluginDirectoryPath());
+        // Register enabled plugins from the default plugin directory. PaperLive stores disabled
+        // plugin names in its own config so their JARs remain installed but are skipped at startup.
+        registerEnabledPlugins(pluginSystem.pluginDirectoryPath());
 
         if (paperLiveRuntimeDirectory != null) {
             // A second directory remap pass treats normal plugins as stale, which can fail on
@@ -116,6 +117,7 @@ public class PluginInitializerManager {
                     .filter(Files::isRegularFile)
                     .filter(path -> path.getFileName().toString().endsWith(".jar"))
                     .sorted()
+                    .filter(path -> isStartupEnabled(pluginSystem.pluginDirectoryPath(), path))
                     .forEach(path -> io.papermc.paper.plugin.util.EntrypointUtil.registerProvidersFromSource(
                         new FileProviderSource(ignored -> "PaperLive runtime JAR '" + path.getFileName() + "'"), path
                     ));
@@ -159,6 +161,27 @@ public class PluginInitializerManager {
                 LOGGER.info("Bukkit plugins ({}):\n - {}", legacyPluginNames.size(), String.join(", ", legacyPluginNames));
             }
         }
+    }
+
+    private static void registerEnabledPlugins(@NotNull Path pluginDirectory) throws IOException {
+        Files.createDirectories(pluginDirectory);
+        try (Stream<Path> files = Files.list(pluginDirectory)) {
+            files.filter(Files::isRegularFile)
+                .filter(path -> !path.getFileName().toString().startsWith("."))
+                .filter(path -> isStartupEnabled(pluginDirectory, path))
+                .forEach(path -> io.papermc.paper.plugin.util.EntrypointUtil.registerProvidersFromSource(
+                    new FileProviderSource(ignored -> "Plugin JAR '" + path.getFileName() + "'"), path
+                ));
+        }
+    }
+
+    private static boolean isStartupEnabled(@NotNull Path pluginDirectory, @NotNull Path pluginJar) {
+        String fileName = pluginJar.getFileName().toString();
+        String jarName = fileName.replaceFirst("(?i)^paperlive-", "").replaceFirst("(?i)\\.jar$", "");
+        String pluginName = PaperLiveProjectCompiler.findPluginName(pluginJar);
+        return pluginName == null
+            ? PaperLiveStartupConfiguration.isEnabled(pluginDirectory, jarName)
+            : PaperLiveStartupConfiguration.isEnabled(pluginDirectory, jarName, pluginName);
     }
 
     // This will be the end of me...

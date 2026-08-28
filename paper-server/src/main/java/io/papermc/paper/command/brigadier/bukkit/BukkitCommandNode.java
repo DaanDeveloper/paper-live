@@ -79,11 +79,20 @@ public class BukkitCommandNode extends LiteralCommandNode<CommandSourceStack> {
             String content = context.getRange().get(context.getInput());
             String[] args = org.apache.commons.lang3.StringUtils.split(content, ' '); // fix adjacent spaces (from console/plugins) causing empty array elements
 
-            // Note: we don't return the result of target.execute as thats success / failure, we return handled (true) or not handled (false)
-            this.command.execute(sender, this.literal, Arrays.copyOfRange(args, 1, args.length));
-
-            // return true as command was handled
-            return 1;
+            io.papermc.paper.plugin.debug.PaperLiveDebugger.CommandTraceScope commandTrace =
+                io.papermc.paper.plugin.debug.PaperLiveDebugger.instance().beginCommand(sender, this.command, content, this.literal);
+            boolean executorResult = false;
+            Throwable failure = null;
+            try {
+                // Note: Brigadier returns handled (1); the Bukkit executor result is retained in the PaperLive trace.
+                executorResult = this.command.execute(sender, this.literal, Arrays.copyOfRange(args, 1, args.length));
+                return 1;
+            } catch (RuntimeException | Error throwable) {
+                failure = throwable;
+                throw throwable;
+            } finally {
+                commandTrace.complete(executorResult, failure);
+            }
         }
     }
 

@@ -4,6 +4,7 @@ import com.mojang.brigadier.tree.LiteralCommandNode;
 import io.papermc.paper.command.brigadier.CommandRegistrationFlag;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.plugin.PaperLiveCommand;
+import io.papermc.paper.plugin.PaperLiveScenarioCommand;
 import net.minecraft.server.MinecraftServer;
 import org.bukkit.command.Command;
 
@@ -25,12 +26,13 @@ public final class PaperCommands {
     public static void registerCommands(final MinecraftServer server) {
         COMMANDS.put("paper", new PaperCommand("paper"));
         COMMANDS.put("paperlive", new PaperLiveCommand("paperlive"));
+        COMMANDS.put("scenario", new PaperLiveScenarioCommand());
         for (final String subcommand : PaperLiveCommand.subcommands()) {
             COMMANDS.put(subcommand, new PaperLiveCommand(subcommand, subcommand));
         }
 
         COMMANDS.forEach((s, command) -> {
-            String fallbackPrefix = command instanceof PaperLiveCommand ? "PaperLive" : "Paper";
+            String fallbackPrefix = command instanceof PaperLiveCommand || command instanceof PaperLiveScenarioCommand ? "PaperLive" : "Paper";
             server.server.getCommandMap().register(s, fallbackPrefix, command);
         });
     }

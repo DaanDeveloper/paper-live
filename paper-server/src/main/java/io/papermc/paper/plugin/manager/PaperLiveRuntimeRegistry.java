@@ -108,10 +108,11 @@ final class PaperLiveRuntimeRegistry {
                 }
             }
 
-            Scoreboard mainScoreboard = Bukkit.getScoreboardManager().getMainScoreboard();
+            org.bukkit.scoreboard.ScoreboardManager scoreboardManager = Bukkit.getScoreboardManager();
+            Scoreboard mainScoreboard = scoreboardManager == null ? null : scoreboardManager.getMainScoreboard();
             for (Scoreboard scoreboard : this.scoreboards) {
                 for (org.bukkit.entity.Player player : Bukkit.getOnlinePlayers()) {
-                    if (player.getScoreboard() == scoreboard) {
+                    if (mainScoreboard != null && player.getScoreboard() == scoreboard) {
                         player.setScoreboard(mainScoreboard);
                     }
                 }

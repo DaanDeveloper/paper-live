@@ -1,6 +1,7 @@
 package io.papermc.paper.threadedregions.scheduler;
 
 import ca.spottedleaf.concurrentutil.util.ConcurrentUtil;
+import io.papermc.paper.plugin.debug.PaperLiveDebugger;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import org.bukkit.plugin.IllegalPluginAccessException;
 import org.bukkit.plugin.Plugin;
@@ -145,6 +146,8 @@ public class FoliaGlobalRegionScheduler implements GlobalRegionScheduler {
         private final long repeatDelay; // in ticks
         private Consumer<ScheduledTask> run;
         private volatile int state;
+        private final String paperLiveRegistrationSite;
+        private final Class<?> paperLiveTaskClass;
 
         private static final VarHandle STATE_HANDLE = ConcurrentUtil.getVarHandle(GlobalScheduledTask.class, "state", int.class);
 
@@ -152,6 +155,8 @@ public class FoliaGlobalRegionScheduler implements GlobalRegionScheduler {
             this.plugin = plugin;
             this.repeatDelay = repeatDelay;
             this.run = run;
+            this.paperLiveRegistrationSite = PaperLiveDebugger.captureTaskRegistrationSite();
+            this.paperLiveTaskClass = run.getClass();
         }
 
         private final int getStateVolatile() {
@@ -174,11 +179,25 @@ public class FoliaGlobalRegionScheduler implements GlobalRegionScheduler {
                 return;
             }
 
+            long startedAt = System.nanoTime();
+            Throwable failure = null;
             try {
                 this.run.accept(this);
             } catch (final Throwable throwable) {
+                failure = throwable;
                 this.plugin.getLogger().log(Level.WARNING, "Global task for " + this.plugin.getDescription().getFullName() + " generated an exception", throwable);
             } finally {
+                PaperLiveDebugger.instance().captureTaskExecution(
+                    this.plugin,
+                    Integer.toHexString(System.identityHashCode(this)),
+                    "PAPER_GLOBAL",
+                    this.paperLiveTaskClass,
+                    this.paperLiveRegistrationSite,
+                    false,
+                    repeating,
+                    System.nanoTime() - startedAt,
+                    failure
+                );
                 boolean reschedule = false;
                 if (!repeating) {
                     this.setStateVolatile(STATE_FINISHED);

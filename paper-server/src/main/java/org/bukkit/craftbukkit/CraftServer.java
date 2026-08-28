@@ -410,6 +410,7 @@ public final class CraftServer implements Server {
         this.pluginManager = new SimplePluginManager(this, commandMap);
         this.paperPluginManager = new io.papermc.paper.plugin.manager.PaperPluginManagerImpl(this, this.commandMap, pluginManager);
         this.pluginManager.paperPluginManager = this.paperPluginManager;
+        this.paperPluginManager.startPaperLiveDebugger(); // PaperLive - Open the integrated live debugger window
          // Paper end
 
         CraftRegistry.setMinecraftRegistry(console.registryAccess());

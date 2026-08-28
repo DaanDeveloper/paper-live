@@ -3,9 +3,12 @@ package io.papermc.paper.plugin;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.nio.ByteBuffer;
+import java.nio.channels.SeekableByteChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.FileTime;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -37,6 +40,7 @@ final class PaperLiveProjectCompiler {
     private static final String PROJECTS_DIRECTORY = "projects";
     private static final String RUNTIME_DIRECTORY = ".paperlive-runtime";
     private static final Duration BUILD_TIMEOUT = Duration.ofMinutes(5);
+    private static final int MAX_DEBUG_BUILD_OUTPUT_BYTES = 128 * 1024;
     private static final AtomicBoolean SKIP_NEXT_COMPILATION = new AtomicBoolean();
     private static final Pattern PLUGIN_NAME = Pattern.compile("^\\s*name\\s*:\\s*['\\\"]?([^\\s'\\\"#]+)");
     private static final Pattern PLUGIN_MAIN_CLASS = Pattern.compile("^\\s*main\\s*:\\s*['\\\"]?([^\\s'\\\"#]+)");
@@ -154,24 +158,62 @@ final class PaperLiveProjectCompiler {
         Path logFile = runtimeDirectory.resolve("paperlive-" + projectName + ".build.log");
         logger.info("[PaperLive] Building source project '{}'", projectName);
 
-        if (!buildSystem.run(projectDirectory, logFile, logger)) {
+        BuildRunResult buildResult = buildSystem.run(projectDirectory, logFile, logger);
+        if (!buildResult.successful()) {
+            reportBuildFailure(projectName, buildSystem, buildResult, logFile);
             logger.error("[PaperLive] Build failed for '{}'. See {}", projectName, logFile);
             return null;
         }
 
         Path pluginJar = findPluginJar(projectDirectory, buildSystem.outputDirectory(projectDirectory));
         if (pluginJar == null) {
+            reportBuildFailure(projectName, buildSystem, new BuildRunResult(false, buildResult.command(), 0, "Build succeeded, but no complete JAR containing plugin.yml was found"), logFile);
             logger.error("[PaperLive] Build succeeded for '{}', but no JAR with plugin.yml was found in {}", projectName, buildSystem.outputDirectory(projectDirectory));
             return null;
         }
 
         String pluginName = findPluginName(pluginJar);
         if (pluginName == null) {
+            reportBuildFailure(projectName, buildSystem, new BuildRunResult(false, buildResult.command(), 0, "Build succeeded, but the plugin descriptor has no name"), logFile);
             logger.error("[PaperLive] Build succeeded for '{}', but its plugin descriptor has no name", projectName);
             return null;
         }
 
         return new BuildArtifact(projectName, pluginName, pluginJar);
+    }
+
+    private static void reportBuildFailure(@NotNull String projectName, @NotNull BuildSystem buildSystem, @NotNull BuildRunResult result, @NotNull Path logFile) {
+        io.papermc.paper.plugin.debug.PaperLiveDebugger.instance().captureBuildFailure(
+            projectName,
+            buildSystem.name(),
+            String.join(" ", result.command()),
+            result.exitCode(),
+            result.reason(),
+            logFile.toAbsolutePath().toString(),
+            readBuildLogTail(logFile)
+        );
+    }
+
+    private static @NotNull String readBuildLogTail(@NotNull Path logFile) {
+        if (!Files.isRegularFile(logFile)) {
+            return "No build output was written.";
+        }
+        try (SeekableByteChannel channel = Files.newByteChannel(logFile, StandardOpenOption.READ)) {
+            long start = Math.max(0, channel.size() - MAX_DEBUG_BUILD_OUTPUT_BYTES);
+            channel.position(start);
+            ByteBuffer buffer = ByteBuffer.allocate((int) (channel.size() - start));
+            while (buffer.hasRemaining() && channel.read(buffer) >= 0) {
+            }
+            String output = new String(buffer.array(), 0, buffer.position(), StandardCharsets.UTF_8);
+            if (start > 0) {
+                int firstLineEnd = output.indexOf('\n');
+                output = firstLineEnd < 0 ? output : output.substring(firstLineEnd + 1);
+                output = "… earlier build output omitted …\n" + output;
+            }
+            return output.isBlank() ? "No build output was written." : output;
+        } catch (IOException exception) {
+            return "Could not read build output: " + exception.getMessage();
+        }
     }
 
     /**
@@ -272,7 +314,7 @@ final class PaperLiveProjectCompiler {
         }
     }
 
-    private static @Nullable String findPluginName(@NotNull Path jarFile) {
+    static @Nullable String findPluginName(@NotNull Path jarFile) {
         try (JarFile jar = new JarFile(jarFile.toFile())) {
             for (String descriptorName : PLUGIN_DESCRIPTORS) {
                 JarEntry descriptor = jar.getJarEntry(descriptorName);
@@ -354,14 +396,9 @@ final class PaperLiveProjectCompiler {
             return null;
         }
 
-        boolean run(@NotNull Path projectDirectory, @NotNull Path logFile, @NotNull Logger logger) {
+        @NotNull BuildRunResult run(@NotNull Path projectDirectory, @NotNull Path logFile, @NotNull Logger logger) {
             String wrapper = isWindows() ? this.windowsWrapper : this.unixWrapper;
             Path wrapperPath = projectDirectory.resolve(wrapper);
-
-            if (!Files.isRegularFile(wrapperPath)) {
-                logger.error("[PaperLive] {} project '{}' needs its own {} wrapper", this.name().toLowerCase(Locale.ROOT), projectDirectory.getFileName(), wrapper);
-                return false;
-            }
 
             List<String> command = new ArrayList<>();
 
@@ -376,6 +413,11 @@ final class PaperLiveProjectCompiler {
 
             command.add(this.task);
 
+            if (!Files.isRegularFile(wrapperPath)) {
+                logger.error("[PaperLive] {} project '{}' needs its own {} wrapper", this.name().toLowerCase(Locale.ROOT), projectDirectory.getFileName(), wrapper);
+                return new BuildRunResult(false, List.copyOf(command), null, "Required build wrapper '" + wrapper + "' is missing");
+            }
+
             try {
                 Process process = new ProcessBuilder(command)
                     .directory(projectDirectory.toFile())
@@ -386,17 +428,18 @@ final class PaperLiveProjectCompiler {
                 if (!process.waitFor(BUILD_TIMEOUT.toMinutes(), TimeUnit.MINUTES)) {
                     process.destroyForcibly();
                     logger.error("[PaperLive] {} build timed out after {} minutes", projectDirectory.getFileName(), BUILD_TIMEOUT.toMinutes());
-                    return false;
+                    return new BuildRunResult(false, List.copyOf(command), null, "Build timed out after " + BUILD_TIMEOUT.toMinutes() + " minutes");
                 }
 
-                return process.exitValue() == 0;
+                int exitCode = process.exitValue();
+                return new BuildRunResult(exitCode == 0, List.copyOf(command), exitCode, exitCode == 0 ? "Build completed" : "Build exited with code " + exitCode);
             } catch (IOException exception) {
                 logger.error("[PaperLive] Cannot start the build for {}", projectDirectory.getFileName(), exception);
-                return false;
+                return new BuildRunResult(false, List.copyOf(command), null, "Could not start build: " + exception.getMessage());
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
                 logger.error("[PaperLive] Build interrupted for {}", projectDirectory.getFileName(), exception);
-                return false;
+                return new BuildRunResult(false, List.copyOf(command), null, "Build was interrupted");
             }
         }
 
@@ -407,6 +450,9 @@ final class PaperLiveProjectCompiler {
         private static boolean isWindows() {
             return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
         }
+    }
+
+    private record BuildRunResult(boolean successful, @NotNull List<String> command, @Nullable Integer exitCode, @NotNull String reason) {
     }
 
     /**

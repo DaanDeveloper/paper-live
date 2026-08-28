@@ -3,6 +3,7 @@ package org.bukkit.craftbukkit.scheduler;
 import java.util.function.Consumer;
 
 import io.papermc.paper.plugin.manager.PaperLiveClassLoaderScope;
+import io.papermc.paper.plugin.debug.PaperLiveDebugger;
 import org.bukkit.Bukkit;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.scheduler.BukkitTask;
@@ -30,6 +31,7 @@ public class CraftTask implements BukkitTask, Runnable { // Spigot
     private final Plugin plugin;
     private final int id;
     private final long createdAt = System.nanoTime();
+    private final String paperLiveRegistrationSite;
 
     CraftTask() {
         this(null, null, CraftTask.NO_REPEATING, CraftTask.NO_REPEATING);
@@ -56,6 +58,7 @@ public class CraftTask implements BukkitTask, Runnable { // Spigot
         }
         this.id = id;
         this.period = period;
+        this.paperLiveRegistrationSite = plugin == null ? "server" : PaperLiveDebugger.captureTaskRegistrationSite();
     }
 
     @Override
@@ -80,9 +83,36 @@ public class CraftTask implements BukkitTask, Runnable { // Spigot
             return;
         }
 
+        long startedAt = System.nanoTime();
+        Throwable failure = null;
         try (PaperLiveClassLoaderScope ignored = PaperLiveClassLoaderScope.open(this.plugin)) {
             this.runTaskBody();
+        } catch (Throwable throwable) {
+            failure = throwable;
+            throw throwUnchecked(throwable);
+        } finally {
+            Class<?> taskClass = this.getTaskClass();
+            PaperLiveDebugger.instance().captureTaskExecution(
+                this.plugin,
+                Integer.toString(this.id),
+                this.isSync() ? "BUKKIT_SYNC" : "BUKKIT_ASYNC",
+                taskClass == null ? CraftTask.class : taskClass,
+                this.paperLiveRegistrationSite,
+                !this.isSync(),
+                this.period > 0,
+                System.nanoTime() - startedAt,
+                failure
+            );
         }
+    }
+
+    private static <T extends Throwable> void throwUnchecked0(Throwable throwable) throws T {
+        throw (T) throwable;
+    }
+
+    private static RuntimeException throwUnchecked(Throwable throwable) {
+        CraftTask.<RuntimeException>throwUnchecked0(throwable);
+        throw new AssertionError("unreachable");
     }
 
     private void runTaskBody() {

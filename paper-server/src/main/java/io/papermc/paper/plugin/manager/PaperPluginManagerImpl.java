@@ -3,6 +3,8 @@ package io.papermc.paper.plugin.manager;
 import com.google.common.graph.MutableGraph;
 import io.papermc.paper.plugin.PermissionManager;
 import io.papermc.paper.plugin.configuration.PluginMeta;
+import io.papermc.paper.plugin.debug.PaperLiveDebugger;
+import io.papermc.paper.plugin.debug.PaperLiveDebuggerWindow;
 import io.papermc.paper.plugin.provider.entrypoint.DependencyContext;
 import org.bukkit.Bukkit;
 import org.bukkit.Server;
@@ -35,17 +37,29 @@ public class PaperPluginManagerImpl implements PluginManager, DependencyContext 
     final PaperPluginInstanceManager instanceManager;
     final PaperEventManager paperEventManager;
     final PaperLiveRuntimeRegistry paperLiveRuntimeRegistry;
+    final PaperLiveDebugger paperLiveDebugger;
+    private final Server server;
+    private @Nullable PaperLiveDebuggerWindow paperLiveDebuggerWindow;
     PermissionManager permissionManager;
 
     public PaperPluginManagerImpl(@NotNull Server server, @NotNull CommandMap commandMap, @Nullable SimplePluginManager permissionManager) {
+        this.server = server;
         this.paperLiveRuntimeRegistry = new PaperLiveRuntimeRegistry();
+        this.paperLiveDebugger = PaperLiveDebugger.instance();
         this.instanceManager = new PaperPluginInstanceManager(this, commandMap, server, this.paperLiveRuntimeRegistry);
-        this.paperEventManager = new PaperEventManager(server, this.paperLiveRuntimeRegistry);
+        this.paperEventManager = new PaperEventManager(server, this.paperLiveRuntimeRegistry, this.paperLiveDebugger);
 
         if (permissionManager == null) {
             this.permissionManager = new NormalPaperPermissionManager();
         } else {
             this.permissionManager = new StupidSPMPermissionManagerWrapper(permissionManager); // TODO: See comment when SimplePermissionManager is removed
+        }
+    }
+
+    /** Opens the in-process PaperLive debugger desktop window for a real server instance. */
+    public void startPaperLiveDebugger() {
+        if (this.paperLiveDebuggerWindow == null) {
+            this.paperLiveDebuggerWindow = PaperLiveDebuggerWindow.open(this.server, this.paperLiveDebugger);
         }
     }
 

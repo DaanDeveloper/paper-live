@@ -2,6 +2,7 @@ package io.papermc.paper.plugin;
 
 import com.mojang.logging.LogUtils;
 import io.papermc.paper.plugin.manager.PaperPluginManagerImpl;
+import io.papermc.paper.plugin.debug.PaperLiveDebugger;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -28,6 +29,7 @@ import org.slf4j.Logger;
 final class PaperLiveRefreshService {
 
     private static final Logger LOGGER = LogUtils.getClassLogger();
+    private static final PaperLiveDebugger DEBUGGER = PaperLiveDebugger.instance();
     private static final AtomicBoolean REFRESHING = new AtomicBoolean();
     private static final AtomicBoolean REFRESH_PENDING = new AtomicBoolean();
     private static final ExecutorService BUILD_EXECUTOR = Executors.newSingleThreadExecutor(runnable -> {
@@ -52,7 +54,8 @@ final class PaperLiveRefreshService {
         }
 
         PaperLiveFeedback.info("Compiling source projects: " + reason + ".");
-        BUILD_EXECUTOR.execute(PaperLiveRefreshService::compileAndRefresh);
+        PaperLiveDebugger.TraceContext traceContext = DEBUGGER.captureTraceContext();
+        BUILD_EXECUTOR.execute(DEBUGGER.wrapAsync(traceContext, "Build source projects", "BUILD", Map.of("reason", reason), PaperLiveRefreshService::compileAndRefresh));
     }
 
     /** Builds one source project and loads its resulting Bukkit plugin into the live runtime. */
@@ -74,7 +77,14 @@ final class PaperLiveRefreshService {
             .anyMatch(project -> project.getFileName().toString().equalsIgnoreCase(projectName));
         if (sourceProject) {
             PaperLiveFeedback.info("Compiling source project '" + projectName + "' for loading.");
-            BUILD_EXECUTOR.execute(() -> compileAndLoad(projectName, includeDependencies));
+            PaperLiveDebugger.TraceContext traceContext = DEBUGGER.captureTraceContext();
+            BUILD_EXECUTOR.execute(DEBUGGER.wrapAsync(
+                traceContext,
+                "Build source project '" + projectName + "'",
+                "BUILD",
+                Map.of("project", projectName),
+                () -> compileAndLoad(projectName, includeDependencies)
+            ));
             return;
         }
 
@@ -86,7 +96,14 @@ final class PaperLiveRefreshService {
         }
 
         PaperLiveFeedback.info("Loading Bukkit plugin JAR '" + pluginJar.getFileName() + "'.");
-        MinecraftServer.getServer().execute(() -> loadBukkitPlugin(pluginJar, includeDependencies));
+        PaperLiveDebugger.TraceContext traceContext = DEBUGGER.captureTraceContext();
+        MinecraftServer.getServer().execute(DEBUGGER.wrapAsync(
+            traceContext,
+            "Load Bukkit plugin JAR '" + pluginJar.getFileName() + "'",
+            "PLUGIN",
+            Map.of("jar", pluginJar.getFileName().toString()),
+            () -> loadBukkitPlugin(pluginJar, includeDependencies)
+        ));
     }
 
     /** Removes a PaperLive-managed Bukkit plugin, including its commands and classloader. */
@@ -96,7 +113,8 @@ final class PaperLiveRefreshService {
             return;
         }
 
-        MinecraftServer.getServer().execute(() -> {
+        PaperLiveDebugger.TraceContext traceContext = DEBUGGER.captureTraceContext();
+        MinecraftServer.getServer().execute(DEBUGGER.wrapAsync(traceContext, "Unload plugin '" + pluginName + "'", "PLUGIN", Map.of("plugin", pluginName), () -> {
             PaperPluginManagerImpl.PluginUnloadResult result = PaperPluginManagerImpl.getInstance().unloadPlugin(pluginName, includeDependents);
             if (!result.found()) {
                 PaperLiveFeedback.error("No loaded Bukkit plugin named '" + pluginName + "' was found.");
@@ -112,7 +130,63 @@ final class PaperLiveRefreshService {
                 String suffix = result.dependents().isEmpty() ? "" : " (including: " + String.join(", ", result.dependents()) + ")";
                 PaperLiveFeedback.success("Unloaded Bukkit plugin '" + pluginName + "'" + suffix + ".");
             }
-        });
+        }));
+    }
+
+    /** Enables a plugin for future startups and loads it immediately through the normal load path. */
+    static void requestEnable(@NotNull String pluginName, boolean includeDependencies) {
+        if (!updateStartupState(pluginName, true)) {
+            return;
+        }
+        PaperLiveFeedback.success("Enabled Bukkit plugin '" + pluginName + "' for server startup.");
+        requestLoad(pluginName, includeDependencies);
+    }
+
+    /** Disables a plugin for future startups and unloads it immediately through the normal unload path. */
+    static void requestDisable(@NotNull String pluginName, boolean includeDependents) {
+        if (!updateStartupState(pluginName, false)) {
+            return;
+        }
+        PaperLiveFeedback.success("Disabled Bukkit plugin '" + pluginName + "' for server startup.");
+        requestUnload(pluginName, includeDependents);
+    }
+
+    private static boolean updateStartupState(@NotNull String pluginName, boolean enabled) {
+        PluginInitializerManager initializerManager = PluginInitializerManager.instance();
+        if (initializerManager == null) {
+            PaperLiveFeedback.error("Cannot update startup state because project discovery is not initialized.");
+            return false;
+        }
+
+        String canonicalName = java.util.Optional.ofNullable(PaperPluginManagerImpl.getInstance().getPlugin(pluginName))
+            .map(plugin -> plugin.getPluginMeta().getName())
+            .or(() -> java.util.Optional.ofNullable(findPluginJar(initializerManager.pluginDirectoryPath(), pluginName))
+                .map(PaperLiveProjectCompiler::findPluginName))
+            .or(() -> findPaperLiveRuntimePluginName(initializerManager.pluginDirectoryPath(), pluginName))
+            .orElse(pluginName);
+        if (!PaperLiveStartupConfiguration.setEnabled(initializerManager.pluginDirectoryPath(), canonicalName, enabled, LOGGER)) {
+            PaperLiveFeedback.error("Could not save the startup state for '" + canonicalName + "'.");
+            return false;
+        }
+        return true;
+    }
+
+    private static @NotNull java.util.Optional<String> findPaperLiveRuntimePluginName(@NotNull Path pluginDirectory, @NotNull String projectName) {
+        Path runtimeDirectory = pluginDirectory.resolve(".paperlive-runtime");
+        String expectedFileName = "paperlive-" + projectName + ".jar";
+        if (!Files.isDirectory(runtimeDirectory)) {
+            return java.util.Optional.empty();
+        }
+        try (java.util.stream.Stream<Path> files = Files.list(runtimeDirectory)) {
+            return files.filter(Files::isRegularFile)
+                .filter(path -> path.getFileName().toString().equalsIgnoreCase(expectedFileName))
+                .map(PaperLiveProjectCompiler::findPluginName)
+                .filter(java.util.Objects::nonNull)
+                .findFirst();
+        } catch (IOException exception) {
+            LOGGER.warn("[PaperLive] Cannot inspect runtime JARs in {}", runtimeDirectory, exception);
+            return java.util.Optional.empty();
+        }
     }
 
     private static void compileAndRefresh() {
@@ -125,6 +199,10 @@ final class PaperLiveRefreshService {
         }
 
         Path pluginDirectory = initializerManager.pluginDirectoryPath();
+        if (!validateSourceConfigurations(pluginDirectory, null)) {
+            complete();
+            return;
+        }
         PaperLiveProjectCompiler.CompilationResult compilation = PaperLiveProjectCompiler.compileProjectsDetailed(pluginDirectory, LOGGER);
 
         if (!compilation.successful()) {
@@ -134,13 +212,25 @@ final class PaperLiveRefreshService {
             return;
         }
 
-        MinecraftServer.getServer().execute(() -> replacePlugins(compilation));
+        PaperLiveDebugger.TraceContext traceContext = DEBUGGER.captureTraceContext();
+        MinecraftServer.getServer().execute(DEBUGGER.wrapAsync(
+            traceContext,
+            "Replace compiled plugins",
+            "PLUGIN",
+            Map.of("plugins", String.join(", ", compilation.pluginNames())),
+            () -> replacePlugins(compilation)
+        ));
     }
 
     private static void compileAndLoad(@NotNull String projectName, boolean includeDependencies) {
         PluginInitializerManager initializerManager = PluginInitializerManager.instance();
         if (initializerManager == null) {
             PaperLiveFeedback.error("Cannot load because project discovery is not initialized.");
+            complete();
+            return;
+        }
+
+        if (!validateSourceConfigurations(initializerManager.pluginDirectoryPath(), projectName)) {
             complete();
             return;
         }
@@ -154,7 +244,14 @@ final class PaperLiveRefreshService {
             return;
         }
 
-        MinecraftServer.getServer().execute(() -> loadPlugin(compilation, includeDependencies));
+        PaperLiveDebugger.TraceContext traceContext = DEBUGGER.captureTraceContext();
+        MinecraftServer.getServer().execute(DEBUGGER.wrapAsync(
+            traceContext,
+            "Load source plugin '" + projectName + "'",
+            "PLUGIN",
+            Map.of("project", projectName),
+            () -> loadPlugin(compilation, includeDependencies)
+        ));
     }
 
     private static void replacePlugins(@NotNull PaperLiveProjectCompiler.CompilationResult compilation) {
@@ -182,6 +279,9 @@ final class PaperLiveRefreshService {
             }
 
             pluginManager.loadPaperLivePlugins(compilation.runtimeJars());
+            if (!PaperLiveConfigGuard.captureSuccessfulBaseline(PluginInitializerManager.instance().pluginDirectoryPath())) {
+                PaperLiveFeedback.info("Config Guard could not update its last-known-good baseline.");
+            }
             PaperLiveFeedback.success("Source projects compiled and refreshed successfully.");
         } catch (Throwable throwable) {
             LOGGER.error("[PaperLive] Refresh failed", throwable);
@@ -200,15 +300,26 @@ final class PaperLiveRefreshService {
                 return;
             }
             Path sourceJar = compilation.sourceJars().getFirst();
-            if (!confirmDependencies(sourceJar, includeDependencies)) {
-                return;
+            try (PaperLiveDebugger.ActivitySpanScope span = DEBUGGER.beginSpan("Validate plugin dependencies", "VALIDATION", Map.of("plugin", pluginName))) {
+                if (!confirmDependencies(sourceJar, includeDependencies)) {
+                    span.fail("Dependency validation failed");
+                    return;
+                }
             }
-            if (!PaperLiveProjectCompiler.prepareRuntimeJars(compilation, LOGGER)) {
-                PaperLiveFeedback.error("Could not prepare the runtime JAR for '" + pluginName + "'.");
-                return;
+            try (PaperLiveDebugger.ActivitySpanScope span = DEBUGGER.beginSpan("Prepare runtime JAR", "FILE", Map.of("plugin", pluginName))) {
+                if (!PaperLiveProjectCompiler.prepareRuntimeJars(compilation, LOGGER)) {
+                    span.fail("Runtime JAR preparation failed");
+                    PaperLiveFeedback.error("Could not prepare the runtime JAR for '" + pluginName + "'.");
+                    return;
+                }
             }
 
-            pluginManager.loadPaperLivePlugins(compilation.runtimeJars());
+            try (PaperLiveDebugger.ActivitySpanScope ignored = DEBUGGER.beginSpan("Load and enable plugin", "PLUGIN", Map.of("plugin", pluginName))) {
+                pluginManager.loadPaperLivePlugins(compilation.runtimeJars());
+            }
+            if (!PaperLiveConfigGuard.captureSuccessfulBaseline(PluginInitializerManager.instance().pluginDirectoryPath())) {
+                PaperLiveFeedback.info("Config Guard could not update its last-known-good baseline.");
+            }
             PaperLiveFeedback.success("Loaded Bukkit plugin '" + pluginName + "' from its source project.");
         } catch (Throwable throwable) {
             LOGGER.error("[PaperLive] Loading a source project failed", throwable);
@@ -230,6 +341,41 @@ final class PaperLiveRefreshService {
             PaperLiveFeedback.error("Load failed: " + throwable.getClass().getSimpleName() + ": " + throwable.getMessage());
         } finally {
             complete();
+        }
+    }
+
+    private static boolean validateSourceConfigurations(@NotNull Path pluginDirectory, @Nullable String projectName) {
+        List<PaperLiveConfigGuard.Diagnostic> diagnostics;
+        try (PaperLiveDebugger.ActivitySpanScope span = DEBUGGER.beginSpan("Validate source configurations", "VALIDATION", Map.of(
+            "scope", projectName == null ? "all projects" : projectName
+        ))) {
+            if (projectName == null) {
+                diagnostics = PaperLiveConfigGuard.inspect(pluginDirectory).diagnostics();
+            } else {
+                Path projectsDirectory = pluginDirectory.resolve("PaperLive").resolve("projects");
+                Path project = PaperLiveProjectCompiler.findProjectDirectories(projectsDirectory).stream()
+                    .filter(candidate -> candidate.getFileName().toString().equalsIgnoreCase(projectName))
+                    .findFirst()
+                    .orElse(null);
+                diagnostics = project == null ? List.of() : PaperLiveConfigGuard.validateProject(project);
+            }
+
+            List<PaperLiveConfigGuard.Diagnostic> errors = diagnostics.stream()
+                .filter(diagnostic -> diagnostic.severity() == PaperLiveConfigGuard.Severity.ERROR)
+                .toList();
+            if (errors.isEmpty()) {
+                return true;
+            }
+            span.fail(errors.size() + " invalid configuration file(s)");
+            PaperLiveFeedback.error("Config Guard blocked the refresh because source YAML is invalid:");
+            for (PaperLiveConfigGuard.Diagnostic error : errors.stream().limit(8).toList()) {
+                String location = error.line() == 0 ? "" : ":" + error.line() + (error.column() == 0 ? "" : ":" + error.column());
+                PaperLiveFeedback.error(error.project() + " — " + error.file() + location + " — " + error.message());
+            }
+            if (errors.size() > 8) {
+                PaperLiveFeedback.error("... and " + (errors.size() - 8) + " more configuration errors.");
+            }
+            return false;
         }
     }
 

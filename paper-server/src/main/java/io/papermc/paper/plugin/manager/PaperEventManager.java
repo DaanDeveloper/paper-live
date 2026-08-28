@@ -4,6 +4,7 @@ import co.aikar.timings.TimedEventExecutor;
 import com.destroystokyo.paper.event.server.ServerExceptionEvent;
 import com.destroystokyo.paper.exception.ServerEventException;
 import com.google.common.collect.Sets;
+import io.papermc.paper.plugin.debug.PaperLiveDebugger;
 import org.bukkit.Server;
 import org.bukkit.Warning;
 import org.bukkit.event.Event;
@@ -11,17 +12,20 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.HandlerList;
 import org.bukkit.event.Listener;
+import org.bukkit.event.Cancellable;
 import org.bukkit.plugin.AuthorNagException;
 import org.bukkit.plugin.EventExecutor;
 import org.bukkit.plugin.IllegalPluginAccessException;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.RegisteredListener;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.logging.Level;
@@ -30,10 +34,12 @@ class PaperEventManager {
 
     private final Server server;
     private final PaperLiveRuntimeRegistry paperLiveRuntimeRegistry;
+    private final PaperLiveDebugger paperLiveDebugger;
 
-    public PaperEventManager(@NotNull Server server, @NotNull PaperLiveRuntimeRegistry paperLiveRuntimeRegistry) {
+    public PaperEventManager(@NotNull Server server, @NotNull PaperLiveRuntimeRegistry paperLiveRuntimeRegistry, @NotNull PaperLiveDebugger paperLiveDebugger) {
         this.server = server;
         this.paperLiveRuntimeRegistry = paperLiveRuntimeRegistry;
+        this.paperLiveDebugger = paperLiveDebugger;
     }
 
     // SimplePluginManager
@@ -46,34 +52,77 @@ class PaperEventManager {
 
         HandlerList handlers = event.getHandlers();
         RegisteredListener[] listeners = handlers.getRegisteredListeners();
+        this.paperLiveDebugger.observeEvent(event);
+        PaperLiveDebugger.EventTraceSession eventTrace = this.paperLiveDebugger.beginEventTrace(event, listeners);
 
-        for (RegisteredListener registration : listeners) {
-            if (!registration.getPlugin().isEnabled()) {
-                continue;
-            }
-
-            try (PaperLiveClassLoaderScope ignored = PaperLiveClassLoaderScope.open(registration.getPlugin())) {
-                registration.callEvent(event);
-            } catch (AuthorNagException ex) {
-                Plugin plugin = registration.getPlugin();
-
-                if (plugin.isNaggable()) {
-                    plugin.setNaggable(false);
-
-                    this.server.getLogger().log(Level.SEVERE, String.format(
-                        "Nag author(s): '%s' of '%s' about the following: %s",
-                        plugin.getPluginMeta().getAuthors(),
-                        plugin.getPluginMeta().getDisplayName(),
-                        ex.getMessage()
-                    ));
+        try {
+            for (int handlerIndex = 0; handlerIndex < listeners.length; handlerIndex++) {
+                RegisteredListener registration = listeners[handlerIndex];
+                Boolean cancelledBefore = cancellationState(event);
+                if (!registration.getPlugin().isEnabled()) {
+                    recordEventHandler(eventTrace, handlerIndex, registration, "SKIPPED_DISABLED", 0L, cancelledBefore, cancelledBefore);
+                    continue;
                 }
-            } catch (Throwable ex) {
-                String msg = "Could not pass event " + event.getEventName() + " to " + registration.getPlugin().getPluginMeta().getDisplayName();
-                this.server.getLogger().log(Level.SEVERE, msg, ex);
-                if (!(event instanceof ServerExceptionEvent)) { // We don't want to cause an endless event loop
-                    this.callEvent(new ServerExceptionEvent(new ServerEventException(msg, ex, registration.getPlugin(), registration.getListener(), event)));
+
+                long startedAt = eventTrace == null ? 0L : System.nanoTime();
+                try (PaperLiveClassLoaderScope ignored = PaperLiveClassLoaderScope.open(registration.getPlugin())) {
+                    registration.callEvent(event);
+                    String status = Boolean.TRUE.equals(cancelledBefore) && registration.isIgnoringCancelled() ? "SKIPPED_CANCELLED" : "COMPLETED";
+                    recordEventHandler(eventTrace, handlerIndex, registration, status, elapsedSince(startedAt), cancelledBefore, cancellationState(event));
+                } catch (AuthorNagException ex) {
+                    recordEventHandler(eventTrace, handlerIndex, registration, "AUTHOR_NAG", elapsedSince(startedAt), cancelledBefore, cancellationState(event));
+                    Plugin plugin = registration.getPlugin();
+
+                    if (plugin.isNaggable()) {
+                        plugin.setNaggable(false);
+
+                        this.server.getLogger().log(Level.SEVERE, String.format(
+                            "Nag author(s): '%s' of '%s' about the following: %s",
+                            plugin.getPluginMeta().getAuthors(),
+                            plugin.getPluginMeta().getDisplayName(),
+                            ex.getMessage()
+                        ));
+                    }
+                } catch (Throwable ex) {
+                    recordEventHandler(eventTrace, handlerIndex, registration, "FAILED", elapsedSince(startedAt), cancelledBefore, cancellationState(event));
+                    this.paperLiveDebugger.captureEventException(event, listeners, handlerIndex, ex);
+                    String msg = "Could not pass event " + event.getEventName() + " to " + registration.getPlugin().getPluginMeta().getDisplayName();
+                    this.server.getLogger().log(Level.SEVERE, msg, ex);
+                    if (!(event instanceof ServerExceptionEvent)) { // We don't want to cause an endless event loop
+                        this.callEvent(new ServerExceptionEvent(new ServerEventException(msg, ex, registration.getPlugin(), registration.getListener(), event)));
+                    }
                 }
             }
+        } finally {
+            if (eventTrace != null) {
+                eventTrace.complete();
+            }
+        }
+    }
+
+    private static long elapsedSince(long startedAt) {
+        return startedAt == 0L ? 0L : System.nanoTime() - startedAt;
+    }
+
+    private static @Nullable Boolean cancellationState(Event event) {
+        try {
+            return event instanceof Cancellable cancellable ? cancellable.isCancelled() : null;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static void recordEventHandler(
+        @Nullable PaperLiveDebugger.EventTraceSession eventTrace,
+        int handlerIndex,
+        RegisteredListener registration,
+        String status,
+        long durationNanos,
+        @Nullable Boolean cancelledBefore,
+        @Nullable Boolean cancelledAfter
+    ) {
+        if (eventTrace != null) {
+            eventTrace.record(handlerIndex, registration, status, durationNanos, cancelledBefore, cancelledAfter);
         }
     }
 
@@ -87,6 +136,7 @@ class PaperEventManager {
 
         for (Map.Entry<Class<? extends Event>, Set<RegisteredListener>> entry : registrations.entrySet()) {
             this.getEventListeners(this.getRegistrationClass(entry.getKey())).registerAll(entry.getValue());
+            this.paperLiveDebugger.recordEventRegistrations(entry.getKey(), entry.getValue());
             registrationCount += entry.getValue().size();
         }
 
@@ -102,7 +152,9 @@ class PaperEventManager {
             throw new IllegalPluginAccessException("Plugin attempted to register " + event + " while not enabled");
         }
 
-        this.getEventListeners(event).register(new RegisteredListener(listener, executor, priority, plugin, ignoreCancelled));
+        RegisteredListener registration = new RegisteredListener(listener, executor, priority, plugin, ignoreCancelled);
+        this.getEventListeners(event).register(registration);
+        this.paperLiveDebugger.recordEventRegistrations(event, List.of(registration));
         this.paperLiveRuntimeRegistry.recordEventRegistrations(plugin, 1);
     }
 
@@ -197,5 +249,6 @@ class PaperEventManager {
 
     public void clearEvents() {
         HandlerList.unregisterAll();
+        this.paperLiveDebugger.clearEventRegistrations();
     }
 }
